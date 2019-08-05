@@ -14,7 +14,7 @@
   * [Some features](#some-features)
   * [Supported Package Formats](#supported-package-formats)
   * [Quick example](#quick-example)
-  * [installing teleport non-interactively](#installing-teleport-non-interactively)
+  * [Installing teleport non-interactively](#installing-teleport-non-interactively)
     * [Ubuntu](#ubuntu-1)
 * [tsysinfo](#tsysinfo)
   * [Useful for...](#useful-for)
@@ -215,7 +215,7 @@ tdeploy --upgrade --nodes=all
 Try `tdeploy --help` for more detailed guide about the full capabilities of this script.
 
 <a id="installing-teleport-non-interactively"></a>
-## installing teleport non-interactively
+## Installing teleport non-interactively
 
 <a id="ubuntu-1"></a>
 ### Ubuntu
