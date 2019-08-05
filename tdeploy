@@ -2269,7 +2269,8 @@ _provision_archive()
 
   else
     # _tsysinfo_raw_url="https://gist.githubusercontent.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/6b995a1b7a945737e952ca902a51f907be58af7b/tsysinfo"
-    _tsysinfo_raw_url="https://gist.githubusercontent.com/$(curl https://gist.github.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e 2> /dev/null | grep -o "dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/[^\"]*")"
+    # _tsysinfo_raw_url="https://gist.githubusercontent.com/$(curl https://gist.github.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e 2> /dev/null | grep -o "dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/[^\"]*")"
+    _tsysinfo_raw_url="https://raw.githubusercontent.com/dreamcat4/teleport-sh-extras/master/tsysinfo"
     wget -O "${_bins_out}/${_bin_tsysinfo}" "$_tsysinfo_raw_url"
   fi
   chmod +x "${_bins_out}/${_bin_tsysinfo}"

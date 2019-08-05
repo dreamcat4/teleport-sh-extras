@@ -3,13 +3,21 @@
 <!-- MarkdownTOC -->
 
 * [Introduction](#introduction)
-* [Quick start - Ubuntu](#quick-start---ubuntu)
+* [Quick start](#quick-start)
+  * [Ubuntu](#ubuntu)
 * [tlogsearch_functions.sh](#tlogsearch_functionssh)
   * [Usage](#usage)
   * [Disclaimer](#disclaimer)
 * [tdeploy](#tdeploy)
-  * [Ubuntu - installing teleport non-interactively](#ubuntu---installing-teleport-non-interactively)
+  * [Usage](#usage-1)
+  * [Disclaimer](#disclaimer-1)
+  * [Some features](#some-features)
+  * [Supported Package Formats](#supported-package-formats)
+  * [Quick example](#quick-example)
+  * [installing teleport non-interactively](#installing-teleport-non-interactively)
+    * [Ubuntu](#ubuntu-1)
 * [tsysinfo](#tsysinfo)
+  * [Useful for...](#useful-for)
 * [Contributing](#contributing)
 * [Credit](#credit)
 
@@ -25,8 +33,11 @@ If you wish to upstream any of the features provided here into the main teleport
 
 In the meantime please enjoy these helper scripts for what they are intended to be. Just some rapid prototyping of a few small missing features / funcitonality. That helped me to make teleport work more like the way I needed.
 
-<a id="quick-start---ubuntu"></a>
-# Quick start - Ubuntu
+<a id="quick-start"></a>
+# Quick start
+
+<a id="ubuntu"></a>
+## Ubuntu
 
 These instructions are provided for ubuntu with (`apt install ...`). For other platforms you just need to install the same equivalent packages using your platform's package manager (`yum`, `brew install`, `pacman`, etc).
 
@@ -34,18 +45,17 @@ These instructions are provided for ubuntu with (`apt install ...`). For other p
 # download this repo using git or whatever (http download url if you prefer)
 git clone https://github.com/dreamcat4/teleport-sh-extras.git
 
-# install package dependancies for tdeploy
+# tdeploy - install package dependancies
 sudo apt install makeself fpm
 
-# install package dependancies for tsysinfo - this should also be done on target teleport nodes
+# tsysinfo - install package dependancies. This should also be done on target teleport nodes
 sudo apt install bash sysstat lm-sensors lsscsi smartmontools socat
 
-# a couple of the tsysinfo subcommands specifically use the `sensors` command from lm-sensors package
+# tsysinfo - a couple of the subcommands specifically use the `sensors` command from lm-sensors package
 # to setup lm-sensors on the target machine you will also need to run the following setup script:
 sensors-detect
 
-
-# install pkg dependancies for tlogsearch_functions.sh
+# tlogsearch_functions.sh - install package dependancies. On the machine with the teleport logs
 sudo apt install gzip coreutils colorized-logs xclip
 ```
 
@@ -53,7 +63,7 @@ sudo apt install gzip coreutils colorized-logs xclip
 <a id="tlogsearch_functionssh"></a>
 # tlogsearch_functions.sh
 
-**WARNING: Subject to future breakage. See Disclaimer section.**
+**WARNING: Subject to future breakage. See [Disclaimer](#disclaimer) section.**
 
 This is a small set of shell functions that you can import into your login script `~/.profile` or `~/.bashrc` which make it easier to grep and search through the stored logs of previous teleport sessions on the commandline. Much like you might want to search through your syslog or other unix logs.
 
@@ -75,7 +85,11 @@ _browser="firefox"
 
 There are several shell functions you can use to grep for teleport logs on the local disk. You can type `tloghelp` for a reminder of what those commands are and how to use them:
 
-```sh
+```
+tloghelp:
+
+  * print this message
+
 tgrep:
 
   * grep the teleport log files
@@ -106,7 +120,7 @@ tgopen:
   * output is converted to a colorized html file with ansi2html
   * also copy each matching session guid to clipboard
 
-examples:
+Examples:
 
   # grep for something across all the locally found teleport logs, outputs to stdout
   tgrep -i "my search string"
@@ -115,10 +129,10 @@ examples:
   tless -i "my search string"
 
   # get (from the X windows clipboard) the list of session guids where grep found a match
-  _teleport_session_guids="$(xclip -selection clipboard -o)"
+  _teleport_session_guids="\$(xclip -selection clipboard -o)"
 
   # run those session logs through ansi2html, in a tmp folder, open in \$_browser
-  topen $_teleport_session_guids
+  topen \$_teleport_session_guids
 
   # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
   tgopen -i "my search string"
@@ -148,7 +162,26 @@ The main goal of this tool is to generate a reasonable installer package for tel
 
 This is also a tool that was designed for making deployment easier in heterogenous environment. Where there are multiple different types of systems / platforms. Wheras in your typical cloud environment there are many very similar nodes to each other. This tool is not meant to replace other existing types of deployment mechanisms for professional or enterprise customers. Configuration management tools such as chef, ansible, saltstack, puppet, etc. So if you are deploying teleport within your enterprise, then please use one of those more appropriate tools instead. However this script may still be useful to you for other parts of the process. For example to create a customized version of an installer package. Which you may then deploy via whichever is your actual preferred deployment mechanism.
 
-Some of the features:
+<a id="usage-1"></a>
+## Usage
+
+Download and install the script as per the [Quick start](#quick-start) installation instructions. The type `tdeploy --help` for the current (most up to date) help. A detailed and very long [help screen](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L792-L968) including [**these useful examples**](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L969-L1022). Or see the [Quick example](#quick-example) below.
+
+<a id="disclaimer-1"></a>
+## Disclaimer
+
+***Not all package formats are fully working OOB.***
+
+Some will require a little further effort. This same disclaimer is also included [at the top of the script here](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L12-L29)
+
+The original version has been tested to work well on ubuntu linux based distributions. For the following package types: deb, binary, sh, tarball. And systemd only.
+ 
+Further work and provisions have been made for supporting other package types and also additional service managers other than systemsd. For example: rpm, macos_pkg, snap, launchd, sysv, upstart, runit. Plus a few others. However expect those untested platforms not to work OOB. A little further work is required to get those other formats to work properly and as intended. Until then, they will likely throw an error - PRs welcome.
+
+The [Contributing](#contributing) section further explains how you can help to get the other platforms properly supportted and included.
+
+<a id="some-features"></a>
+## Some features
 
 * Per-user (and multiple) configuration settings files, which also include:
 * Templates for the teleport.yaml config file to be deployed, the daemon / init system files, etc.
@@ -159,11 +192,13 @@ Some of the features:
 * Ability to remove teleport from existing node(s)... useful to clean up previous installations of teleport
 * ...and more!
 
-Supported Package Formats:
+<a id="supported-package-formats"></a>
+## Supported Package Formats
 
 The initial support is already included for building the follow package types: `tarball`, `deb`, and generic self extracting installer. And with the init system `systemd`. However there are also quite a few other possible package types. Whatever is supported by the fpm tool. Some of these will require a small amount of extra work to get running (for example RPMs, snap pkg, MacOS pkg, etc). But it's not very difficult - you just need to have a little knowledge of those target platforms, and the ability to test out the resulting packages. To write a little extra code in the missing handler functions. There are already stubs created at those places where they will error out. PRs are welcome.
 
-Quick example:
+<a id="quick-example"></a>
+## Quick example
 
 Generate a custom installer package (including a unique provisioning token), for debian distributions with a debian files layout, and include a service file for debian's default systemd.
 
@@ -179,8 +214,11 @@ tdeploy --upgrade --nodes=all
 
 Try `tdeploy --help` for more detailed guide about the full capabilities of this script.
 
-<a id="ubuntu---installing-teleport-non-interactively"></a>
-## Ubuntu - installing teleport non-interactively
+<a id="installing-teleport-non-interactively"></a>
+## installing teleport non-interactively
+
+<a id="ubuntu-1"></a>
+### Ubuntu
 
 Once you have used tdeploy to generate a debian `.deb` apt package. Then you need to install it and bring up teleport on the target node(s). By default the generated teleport package will ask what ip address to bind to / listen on. And then it will immediately proceed with the install and bring up teleport service automatically with systemd.
 
@@ -240,6 +278,9 @@ Print out basic system specs, and system health diagnostic information.
 This script which gathers and report back a very short / terse version of specific types of system health. Plus other basic types of system information. So the output is just a minimal number of characters to be displayed on a single line, or put into a variable of another program etc. To give a very quick way to read a system's overall health.
 
 Depending upon which specific subcommand(s) are being invoked, certain few external dependancies may also be required. For example, to report on `systemd` health status, requires that systemd is installed. To report on disk health requires the package `smartmontools`. To report on fan spin requires `lm-sensors` be properly configured. And to report on zfs filesystem health requires that `zfs` and it's kernel module(s) be properly installed.
+
+<a id="useful-for"></a>
+## Useful for...
 
 This very basic system reporting is designed to be useful for the following types of applications:
 

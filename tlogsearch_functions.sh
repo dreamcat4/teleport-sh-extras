@@ -1,7 +1,7 @@
 # @Author: Dreamcat4
 # @Date:   2019-08-04 12:27:23
 # @Last Modified by:   Dreamcat4
-# @Last Modified time: 2019-08-05 17:15:27
+# @Last Modified time: 2019-08-05 18:47:51
 
 
 # _tsession_folder()
@@ -275,6 +275,10 @@ tloghelp()
 {
     cat <<- EOF
 
+    tloghelp:
+
+      * print this message
+
     tgrep:
 
       * grep the teleport log files
@@ -305,7 +309,7 @@ tloghelp()
       * output is converted to a colorized html file with ansi2html
       * also copy each matching session guid to clipboard
 
-    examples:
+    Examples:
 
       # grep for something across all the locally found teleport logs, outputs to stdout
       tgrep -i "my search string"
@@ -314,10 +318,10 @@ tloghelp()
       tless -i "my search string"
 
       # get (from the X windows clipboard) the list of session guids where grep found a match
-      _teleport_session_guids="$(xclip -selection clipboard -o)"
+      _teleport_session_guids="\$(xclip -selection clipboard -o)"
 
       # run those session logs through ansi2html, in a tmp folder, open in \$_browser
-      topen $_teleport_session_guids
+      topen \$_teleport_session_guids
 
       # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
       tgopen -i "my search string"
