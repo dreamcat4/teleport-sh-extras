@@ -1508,60 +1508,6 @@ _parse_args()
 _parse_args "$@"
 
 
-
-# _select_choice_external_ip()
-# {
-#     echo -n "type the number between [] or 'c' to cancel: "
-#     read -rsn1 _index
-
-#     _index="\$(echo "\$_index" | tr -d '\n')"
-
-#   case \$_index in
-#     c)
-#       echo
-#       echo "Installation cancelled."
-#       return 1
-#       ;;
-
-#       ''|*[!0-9]*) echo ""; _select_choice_external_ip;;
-
-#       *)
-#       _external_ip="\$(echo "\$_external_ips" | sed "\${_index}q;d")"
-#       if [ ! "\$_external_ip" ]; then
-#         echo ""; _select_choice_external_ip
-#       fi
-#       ;;
-#   esac
-# }
-
-# _get_external_ip()
-# {
-#   # get 1st external ip addresses
-#   _external_ips="\$(ip addr | grep -o "inet[^/]*" | grep -v "127.0." | cut -d " " -f 2)"
-#   _num_external_ips="\$(echo "\$_external_ips" | wc -l)"
-
-#   if [ \$_num_external_ips -gt 1 ]; then
-#     echo "Select External ip:"
-
-#     _i=1
-#     for _ip in \$_external_ips; do
-#       echo "[\${_i}] \$_ip"
-#       _i="\$(expr \$_i + 1)"
-#     done
-
-#     _select_choice_external_ip && echo ""
-
-#   elif [ \$_num_external_ips -lt 1 ]; then
-#     echo "error: no external ip addresses found. Perhaps they are not configured yet for this node?"
-#     return 1
-
-#   else
-#     _external_ip="\$_external_ips"
-#   fi
-#   echo "external ip selected!"
-#   echo "=\${_external_ip}"
-# }
-
 _get_init()
 {
   unset _init
@@ -1680,22 +1626,8 @@ _stop_service()
 
 }
 
+
 _init="\$(_get_init)"
-#_stop_service
-
-
-# echo "We need to know the external ip address, for teleport to advertise itself on."
-
-# if ! _get_external_ip; then
-#   echo "error: Sorry but teleport cannot provision without an external ip address."
-#   echo "For more information see: https://github.com/gravitational/teleport/issues/2770"
-#   exit 1
-# fi
-
-
-# echo -n "Writing external ip ${_external_ip} into ${_target_cfg_file}..."
-# sed -i -e "s/PUT_NODE_ADVERTISE_IP_HERE/\${_external_ip}/g" "${_target_cfg_file}"
-# echo " Done."
 
 
 if [ "\$_pkg_type" = "deb" ]; then
