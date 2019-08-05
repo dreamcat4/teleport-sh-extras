@@ -1,7 +1,7 @@
 # @Author: Dreamcat4
 # @Date:   2019-08-04 12:27:23
 # @Last Modified by:   Dreamcat4
-# @Last Modified time: 2019-08-05 21:13:46
+# @Last Modified time: 2019-08-05 21:17:45
 
 
 
@@ -131,20 +131,14 @@ _topen()
     _chunks_files="$(find "$_teleport_logs" -name "*.chunks.gz")"
     _chunks_gz="$(echo "$_chunks_files" | grep "$_guid")"
 
-    # echo "$_chunks_files"
-
     if [ "$_chunks_gz" ]; then
       _chunks_file="${_sessions_folder}/${_chunks_gz}"
-      # ls -lsa "${_sessions_folder}/${_chunks_gz}"
-      # ls -lsa "${_chunks_file}"
 
       # decompress them into a temp folder
       if [ -e "$_chunks_file" ]; then
-        # _file="$(basename ${_chunks_file%.gz})"
+
         _file="${_tmpdir}/$(basename ${_chunks_file%.gz})"
         echo "y" | gzip -q -d -k -c "$_chunks_file" > "${_file}"
-
-        # sed -i -e "s,\x1B\[[0-9;]*[a-lA-Ln-zN-Z],,g" -e "s,\e\[?25[hl],,g"  "$_chunks_file"
 
         ansi2html --contrast --style "body {background-color: rgb(37, 35, 35);};" --title "$_file" < "$_file" > "${_file}.html"
         sed -i -e "s|pre {|pre { font-family: \"Droid Sans Mono\",\"monospace\",monospace,\"Droid Sans Fallback\";line-height: 17px;font-size: 14px;|" "${_file}.html"
@@ -183,11 +177,14 @@ _topen()
   _output="$_all_chunks_file ${_files# *}"
   echo "${_output# *}"
 
+  # disabled: open in sublime text 3
   # subl -w "$_all_chunks_file" $_files
 
+  # other possible options for which tabs to open in the browser
   $_browser ${_all_chunks_file_html} $_html_files $_open_tmpdir 2> /dev/null &
   # $_browser "${_all_chunks_file_html}" $_html_files &
   # $_browser $_html_files &
+
   _pid="$!"
   sleep 1
   wait $_pid
@@ -198,7 +195,7 @@ _topen()
   done
 
   # # unfortunately - we cannot use xdg-open because it returns immediately
-  # open "${_chunks_file%.gz}" &
+  # xdg-open "${_chunks_file%.gz}" &
   # _pids="${_pids} $!"
   # echo "$_pids"
 
@@ -225,7 +222,6 @@ tgopen()
 
   if [ "$_matches" ]; then
 
-    # _output="$(topen "$_matches")"
     topen "$_matches"
 
     tgrep_guids="$(echo "$_matches" | grep -o -E "[0-9a-fA-F-]{36}")"
