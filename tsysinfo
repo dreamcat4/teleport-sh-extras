@@ -36,10 +36,9 @@
 #   otherwise a status of "n/a" will be returned
 #
 # Contribution guidelines:
-#   Released under the general Apache v2.0 license
-#   If making further changes or improvements then Just 
-#   append a new entry to the version history and put your
-#   name underneath it as a contributor.
+#   Released under public domain and the general Apache v2.0 license
+#   If making further changes or improvements then just fork in github
+#   Also can append a new entry to the version history as a contributor.
 #   
 #
 # Dependancies:
@@ -617,92 +616,89 @@ _parse_args()
             case $_arg in
 
                 platform)           _platform;;
-kernel)             _kernel;;
-os)                 _os;;
-uptime)             _uptime;;
-cpu-cores)          _cpu_cores;;
-cpu-usage)          _cpu_usage;;
-cpu-temp)           _cpu_temp;;
-fan-spin)           _arg_fan_spin=true;;
-memory-usage)       _memory_usage;;
-dmesg-health)       _dmesg_health;;
-disks)              _disks;;
-disks-worst-temp)   _disks_worst_temp;;
-disk-usage)         _arg_disk_usage=true;;
-disk-health)        _disk_health;;
-zfs-health)         _zfs_health;;
-systemd-health)     _systemd_health;;
-systemctl-status)   _arg_systemctl_status=true;;
-docker-status)      _docker_status;;
-socket-listen)      _arg_socket_listen=true;;
-socket-send)        _arg_socket_send=true;;
+                kernel)             _kernel;;
+                os)                 _os;;
+                uptime)             _uptime;;
+                cpu-cores)          _cpu_cores;;
+                cpu-usage)          _cpu_usage;;
+                cpu-temp)           _cpu_temp;;
+                fan-spin)           _arg_fan_spin=true;;
+                memory-usage)       _memory_usage;;
+                dmesg-health)       _dmesg_health;;
+                disks)              _disks;;
+                disks-worst-temp)   _disks_worst_temp;;
+                disk-usage)         _arg_disk_usage=true;;
+                disk-health)        _disk_health;;
+                zfs-health)         _zfs_health;;
+                systemd-health)     _systemd_health;;
+                systemctl-status)   _arg_systemctl_status=true;;
+                docker-status)      _docker_status;;
+                socket-listen)      _arg_socket_listen=true;;
+                socket-send)        _arg_socket_send=true;;
 
---debug|-d)                  _debug=true; set -x;;
---help|-h)                   _help=true ;;
+                --debug|-d)                  _debug=true; set -x;;
+                --help|-h)                   _help=true ;;
 
-*)
-if [ "$_arg_fan_spin" ]; then
-    _fans="$_arg"
+                *)
+                if [ "$_arg_fan_spin" ]; then
+                    _fans="$_arg"
 
-elif [ "$_arg_disk_usage" ]; then
-    _disk="$_arg"
+                elif [ "$_arg_disk_usage" ]; then
+                    _disk="$_arg"
 
-elif [ "$_arg_systemctl_status" ]; then
-    _systemctl_service="$_arg"
+                elif [ "$_arg_systemctl_status" ]; then
+                    _systemctl_service="$_arg"
 
-elif [ "$_arg_socket_listen" ]; then
-    _listen_socket="$_arg"
-                        # while true; do
-                        #   _socket_listen "$_listen_socket"
-                        # done
-                        _socket_listen "$_listen_socket"
-                        return 0
+                elif [ "$_arg_socket_listen" ]; then
+                    _listen_socket="$_arg"
+                    _socket_listen "$_listen_socket"
+                    return 0
 
-                    elif [ "$_arg_socket_send" ]; then
-                        _send_socket="$_arg"
+                elif [ "$_arg_socket_send" ]; then
+                    _send_socket="$_arg"
 
-                    else
-                        warn "unrecognized argument: \"$_arg\""
-                        _cat_help
-                        exit 1
-                    fi
-                    ;;
-                esac
-            fi
-
-
-            shift
-        done
-
-        if [ "$_help" ] || [ "$_no_args" ]; then
-            _cat_help
-            exit 0
+                else
+                    warn "unrecognized argument: \"$_arg\""
+                    _cat_help
+                    exit 1
+                fi
+                ;;
+            esac
         fi
 
 
-        if [ "$_arg_fan_spin" ]; then
-            if [ ! "$_fans" ]; then
-                err 1 "no fans specified"
-            else
-                _fan_spin "$_fans"
-            fi
-        fi
+        shift
+    done
 
-        if [ "$_arg_disk_usage" ]; then
-            if [ ! "$_disk" ]; then
-                _disk="/"
-            fi
-            _disk_usage "$_disk"
-        fi
+    if [ "$_help" ] || [ "$_no_args" ]; then
+        _cat_help
+        exit 0
+    fi
 
-        if [ "$_arg_systemctl_status" ]; then
-            if [ ! "$_systemctl_service" ]; then
-                err 1 "no systemd service specified"
-            else
-                _systemctl_status "$_systemctl_service"
-            fi
+
+    if [ "$_arg_fan_spin" ]; then
+        if [ ! "$_fans" ]; then
+            err 1 "no fans specified"
+        else
+            _fan_spin "$_fans"
         fi
-    }
+    fi
+
+    if [ "$_arg_disk_usage" ]; then
+        if [ ! "$_disk" ]; then
+            _disk="/"
+        fi
+        _disk_usage "$_disk"
+    fi
+
+    if [ "$_arg_systemctl_status" ]; then
+        if [ ! "$_systemctl_service" ]; then
+            err 1 "no systemd service specified"
+        else
+            _systemctl_status "$_systemctl_service"
+        fi
+    fi
+}
 
 
 
