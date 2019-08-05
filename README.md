@@ -5,12 +5,9 @@
 * [Introduction](#introduction)
 * [Quick start](#quick-start)
   * [Ubuntu](#ubuntu)
-* [tlogsearch_functions.sh](#tlogsearch_functionssh)
+* [tdeploy](#tdeploy)
   * [Usage](#usage)
   * [Disclaimer](#disclaimer)
-* [tdeploy](#tdeploy)
-  * [Usage](#usage-1)
-  * [Disclaimer](#disclaimer-1)
   * [Some features](#some-features)
   * [Supported Package Formats](#supported-package-formats)
   * [Quick example](#quick-example)
@@ -18,6 +15,9 @@
     * [Ubuntu](#ubuntu-1)
 * [tsysinfo](#tsysinfo)
   * [Useful for...](#useful-for)
+* [tlogsearch_functions.sh](#tlogsearch_functionssh)
+  * [Usage](#usage-1)
+  * [Disclaimer](#disclaimer-1)
 * [Contributing](#contributing)
   * [Where to write in support for missing platforms?](#where-to-write-in-support-for-missing-platforms)
 * [Credit](#credit)
@@ -61,98 +61,6 @@ sudo apt install gzip coreutils colorized-logs xclip
 ```
 
 
-<a id="tlogsearch_functionssh"></a>
-# tlogsearch_functions.sh
-
-**WARNING: Subject to future breakage. See [Disclaimer](#disclaimer) section.**
-
-This is a small set of shell functions that you can import into your login script `~/.profile` or `~/.bashrc` which make it easier to grep and search through the stored logs of previous teleport sessions on the commandline. Much like you might want to search through your syslog or other unix logs.
-
-To use these function. You must first add something like these lines to your `~/.bashrc` or your `~/.profile`
-
-```sh
-# source tlogsearch_functions.sh
-. ${HOME}/teleport-sh-extras/tlogsearch_functions.sh
-
-# You need to set these to point to your teleport data folder
-_teleport_logs="/var/lib/teleport/data/log"
-
-# set your favorite browser executable, to open logs into after ansi2html
-_browser="firefox"
-```
-
-<a id="usage"></a>
-## Usage
-
-There are several shell functions you can use to grep for teleport logs on the local disk. You can type `tloghelp` for a reminder of what those commands are and how to use them:
-
-```
-tloghelp:
-
-  * print this message
-
-tgrep:
-
-  * grep the teleport log files
-  * takes grep flags and syntax just omit the <files> at the end
-  * tries to remove any troublesome escape or control characters
-  * outputs results to stdout, just like grep - because it is grep!
-  * exports all matching session guids as \$tgrep_guids env variable
-  * also copies matching session guids to xwindows clipboard
-
-tless:
-
-  * tgrep then open in less program each matching log file in turn
-  * takes grep flags and syntax just like tgrep
-  * tries to remove any troublesome escape or control characters
-  * exports all matching session guids as \$tgrep_guids env variable
-  * also copies matching session guids to xwindows clipboard
-
-topen:
-
-  * tgrep then open in your \$_browser each matching log file
-  * takes a list of session guids to open as its arguments
-  * tries to remove any troublesome escape or control characters
-  * output is converted to a colorized html file with ansi2html
-  * exports all matching session guids as \$tgrep_guids env variable
-  * also copies matching session guids to xwindows clipboard
-
-tgopen:
-  * combines tgrep with topen, to directly open matches sessions in \$_browser
-  * takes grep flags and syntax just like tgrep
-  * tries to remove any troublesome escape or control characters
-  * output is converted to a colorized html file with ansi2html
-  * exports all matching session guids as \$tgrep_guids env variable
-  * also copies matching session guids to xwindows clipboard
-
-Examples:
-
-  # grep for something across all the locally found teleport logs, outputs to stdout
-  tgrep -i "my search string"
-
-  # open matching sessions in the program less, with ansi colorized output
-  tless -i "my search string"
-
-  # take the last search result, run each session log through ansi2html, in a tmp folder, open in \$_browser
-  topen \$tgrep_guids
-
-  # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
-  tgopen -i "my search string"
-```
-
-<a id="disclaimer"></a>
-## Disclaimer
-
-These shell functions depend entirely on the underlying layout and storage mechanism of the log files. As they are currently being written to disk in teleport version 4. And without storing them inside of a database!
-
-These functions can search through a teleport logs folder containing `.chunkz.gz` compressed session logs. That are openly searchable on the disk. The way that teleport actually stores all it's session logs is heavily implementation specific. And is entirely subject to change in the future. Not only the log storage format itself may change entirely (for example to json or to another structured text format). But the actual directory structure / session struction may also be subject change too. Or they may no longer be stored and directly accessible on the disk in the future either. As it can also make a lot of sense to store them inside of a database instead. There is no current public or private API for searching through teleport logs. These shell functions may break at any time.
-
-At some point in the future, the teleport project will very likely be changing and improving a set of built-in logging features. For teleport proper, to come in some future version. And we very much look forward to that happening, so that these types of hacks will no longer necessary. Other benefits such as a higher searching performance, pre-indexing, better search capabilities may also then be possible too. Since currently using this mechanism there are going to be performance limitations when searching through a very large number of logs. There are probably quite significant limitations for how fast a program such as `zgrep` can linearly search through a large number of log files on the filesystem. Unless there is a caching or indexing or other mechanism to help speed up subsequent searches.
-
-In the meantime, these shell functions simply provide a very basic log searching mechanism. To search through logs from the commandline and using existing and commonly available unix tools. And perhaps then open the search results in an external editor or other simple program.
-
-The performance on larger log sets has not been tested. But it's expected to be a linear relationship. For example if you have twice as many total logs saved in your cluster. Then performing a search through then may take twice as long.
-
 <a id="tdeploy"></a>
 # tdeploy
 
@@ -164,12 +72,12 @@ The main goal of this tool is to generate a reasonable installer package for tel
 
 This is also a tool that was designed for making deployment easier in heterogenous environment. Where there are multiple different types of systems / platforms. Wheras in your typical cloud environment there are many very similar nodes to each other. This tool is not meant to replace other existing types of deployment mechanisms for professional or enterprise customers. Configuration management tools such as chef, ansible, saltstack, puppet, etc. So if you are deploying teleport within your enterprise, then please use one of those more appropriate tools instead. However this script may still be useful to you for other parts of the process. For example to create a customized version of an installer package. Which you may then deploy via whichever is your actual preferred deployment mechanism.
 
-<a id="usage-1"></a>
+<a id="usage"></a>
 ## Usage
 
 Download and install the script as per the [Quick start](#quick-start) installation instructions. The type `tdeploy --help` for the current (most up to date) help. A detailed and very long [help screen](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L792-L968) including [**these useful examples**](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L969-L1022). Or see the [Quick example](#quick-example) below.
 
-<a id="disclaimer-1"></a>
+<a id="disclaimer"></a>
 ## Disclaimer
 
 ***Not all package formats are fully working OOB.***
@@ -306,6 +214,98 @@ $ tsysinfo systemd-health
 
 For a full list of all the available subcommands, run `tsysinfo --help`
 
+
+<a id="tlogsearch_functionssh"></a>
+# tlogsearch_functions.sh
+
+**WARNING: Subject to future breakage. See [Disclaimer](#disclaimer) section.**
+
+This is a small set of shell functions that you can import into your login script `~/.profile` or `~/.bashrc` which make it easier to grep and search through the stored logs of previous teleport sessions on the commandline. Much like you might want to search through your syslog or other unix logs.
+
+To use these function. You must first add something like these lines to your `~/.bashrc` or your `~/.profile`
+
+```sh
+# source tlogsearch_functions.sh
+. ${HOME}/teleport-sh-extras/tlogsearch_functions.sh
+
+# You need to set these to point to your teleport data folder
+_teleport_logs="/var/lib/teleport/data/log"
+
+# set your favorite browser executable, to open logs into after ansi2html
+_browser="firefox"
+```
+
+<a id="usage-1"></a>
+## Usage
+
+There are several shell functions you can use to grep for teleport logs on the local disk. You can type `tloghelp` for a reminder of what those commands are and how to use them:
+
+```
+tloghelp:
+
+  * print this message
+
+tgrep:
+
+  * grep the teleport log files
+  * takes grep flags and syntax just omit the <files> at the end
+  * tries to remove any troublesome escape or control characters
+  * outputs results to stdout, just like grep - because it is grep!
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
+
+tless:
+
+  * tgrep then open in less program each matching log file in turn
+  * takes grep flags and syntax just like tgrep
+  * tries to remove any troublesome escape or control characters
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
+
+topen:
+
+  * tgrep then open in your \$_browser each matching log file
+  * takes a list of session guids to open as its arguments
+  * tries to remove any troublesome escape or control characters
+  * output is converted to a colorized html file with ansi2html
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
+
+tgopen:
+  * combines tgrep with topen, to directly open matches sessions in \$_browser
+  * takes grep flags and syntax just like tgrep
+  * tries to remove any troublesome escape or control characters
+  * output is converted to a colorized html file with ansi2html
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
+
+Examples:
+
+  # grep for something across all the locally found teleport logs, outputs to stdout
+  tgrep -i "my search string"
+
+  # open matching sessions in the program less, with ansi colorized output
+  tless -i "my search string"
+
+  # take the last search result, run each session log through ansi2html, in a tmp folder, open in \$_browser
+  topen \$tgrep_guids
+
+  # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
+  tgopen -i "my search string"
+```
+
+<a id="disclaimer-1"></a>
+## Disclaimer
+
+These shell functions depend entirely on the underlying layout and storage mechanism of the log files. As they are currently being written to disk in teleport version 4. And without storing them inside of a database!
+
+These functions can search through a teleport logs folder containing `.chunkz.gz` compressed session logs. That are openly searchable on the disk. The way that teleport actually stores all it's session logs is heavily implementation specific. And is entirely subject to change in the future. Not only the log storage format itself may change entirely (for example to json or to another structured text format). But the actual directory structure / session struction may also be subject change too. Or they may no longer be stored and directly accessible on the disk in the future either. As it can also make a lot of sense to store them inside of a database instead. There is no current public or private API for searching through teleport logs. These shell functions may break at any time.
+
+At some point in the future, the teleport project will very likely be changing and improving a set of built-in logging features. For teleport proper, to come in some future version. And we very much look forward to that happening, so that these types of hacks will no longer necessary. Other benefits such as a higher searching performance, pre-indexing, better search capabilities may also then be possible too. Since currently using this mechanism there are going to be performance limitations when searching through a very large number of logs. There are probably quite significant limitations for how fast a program such as `zgrep` can linearly search through a large number of log files on the filesystem. Unless there is a caching or indexing or other mechanism to help speed up subsequent searches.
+
+In the meantime, these shell functions simply provide a very basic log searching mechanism. To search through logs from the commandline and using existing and commonly available unix tools. And perhaps then open the search results in an external editor or other simple program.
+
+The performance on larger log sets has not been tested. But it's expected to be a linear relationship. For example if you have twice as many total logs saved in your cluster. Then performing a search through then may take twice as long.
 
 <a id="contributing"></a>
 # Contributing
