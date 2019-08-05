@@ -97,14 +97,16 @@ tgrep:
   * takes grep flags and syntax just omit the <files> at the end
   * tries to remove any troublesome escape or control characters
   * outputs results to stdout, just like grep - because it is grep!
-  * also copy each matching session guid to clipboard
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
 
 tless:
 
   * tgrep then open in less program each matching log file in turn
   * takes grep flags and syntax just like tgrep
   * tries to remove any troublesome escape or control characters
-  * also copy each matching session guid to clipboard
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
 
 topen:
 
@@ -112,14 +114,16 @@ topen:
   * takes a list of session guids to open as its arguments
   * tries to remove any troublesome escape or control characters
   * output is converted to a colorized html file with ansi2html
-  * also copy each matching session guid to clipboard
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
 
 tgopen:
   * combines tgrep with topen, to directly open matches sessions in \$_browser
   * takes grep flags and syntax just like tgrep
   * tries to remove any troublesome escape or control characters
   * output is converted to a colorized html file with ansi2html
-  * also copy each matching session guid to clipboard
+  * exports all matching session guids as \$tgrep_guids env variable
+  * also copies matching session guids to xwindows clipboard
 
 Examples:
 
@@ -129,11 +133,8 @@ Examples:
   # open matching sessions in the program less, with ansi colorized output
   tless -i "my search string"
 
-  # get (from the X windows clipboard) the list of session guids where grep found a match
-  _teleport_session_guids="\$(xclip -selection clipboard -o)"
-
-  # run those session logs through ansi2html, in a tmp folder, open in \$_browser
-  topen \$_teleport_session_guids
+  # take the last search result, run each session log through ansi2html, in a tmp folder, open in \$_browser
+  topen \$tgrep_guids
 
   # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
   tgopen -i "my search string"

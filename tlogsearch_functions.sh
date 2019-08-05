@@ -1,23 +1,9 @@
 # @Author: Dreamcat4
 # @Date:   2019-08-04 12:27:23
 # @Last Modified by:   Dreamcat4
-# @Last Modified time: 2019-08-05 18:47:51
+# @Last Modified time: 2019-08-05 21:13:46
 
 
-# _tsession_folder()
-# {
-#   # check that we have manually created a symlink to the teleport cluster's log / sessions folder
-#   _teleport_home="${HOME}/.teleport"
-#   _sessions_folder="${_teleport_home}/sessions"
-
-#   if [ ! -L "$_sessions_folder" ] && [ ! -d "$_sessions_folder" ]; then
-#     echo "error: no symlink to sessions folder \"$_sessions_folder\""
-#     echo "usually this is found at \${TELEPORT_HOME}/data/log/\${CLUSTER_GUID}/sessions/default"
-#     return 1
-#   fi
-# }
-
-# _teleport_home="${HOME}/.teleport"
 
 # You need to set these to point to your teleport data folder
 _teleport_logs="/var/lib/teleport/data/log"
@@ -53,9 +39,6 @@ _t_get_tmp()
 
 _tgrep()
 {
-  # _tsession_folder
-  # zgrep "$@" ${_teleport_home}/sessions/*chunks.gz | sed -e "s,\x1B\[[0-9;]*[a-lA-Ln-zN-Z],,g" -e "s,\e\[?25[hl],,g"
-
   _chunks_files="$(find "$_teleport_logs" -name "*.chunks.gz")"
   zgrep "$@" $_chunks_files | sed -e "s,\x1B\[[0-9;]*[a-lA-Ln-zN-Z],,g" -e "s,\e\[?25[hl],,g"
 }
@@ -70,10 +53,8 @@ tgrep()
 
   _tgrep "$@"
 
-  # export matching sessions as tgrep_guids
+  # export matching sessions as "tgrep_guids" environment variable
 
-  # _matches="$(zgrep -l "$@" ${_teleport_home}/sessions/*chunks.gz)"
-  # _chunks_files="$(find "$_teleport_logs" -name "*.chunks.gz")"
   _matches="$(zgrep -l "$@" $_chunks_files)"
 
   tgrep_guids="$(echo "$_matches" | grep -o -E "[0-9a-fA-F-]{36}")"
@@ -285,14 +266,16 @@ tloghelp()
       * takes grep flags and syntax just omit the <files> at the end
       * tries to remove any troublesome escape or control characters
       * outputs results to stdout, just like grep - because it is grep!
-      * also copy each matching session guid to clipboard
+      * exports all matching session guids as \$tgrep_guids env variable
+      * also copies matching session guids to xwindows clipboard
 
     tless:
 
       * tgrep then open in less program each matching log file in turn
       * takes grep flags and syntax just like tgrep
       * tries to remove any troublesome escape or control characters
-      * also copy each matching session guid to clipboard
+      * exports all matching session guids as \$tgrep_guids env variable
+      * also copies matching session guids to xwindows clipboard
 
     topen:
 
@@ -300,14 +283,16 @@ tloghelp()
       * takes a list of session guids to open as its arguments
       * tries to remove any troublesome escape or control characters
       * output is converted to a colorized html file with ansi2html
-      * also copy each matching session guid to clipboard
+      * exports all matching session guids as \$tgrep_guids env variable
+      * also copies matching session guids to xwindows clipboard
 
     tgopen:
       * combines tgrep with topen, to directly open matches sessions in \$_browser
       * takes grep flags and syntax just like tgrep
       * tries to remove any troublesome escape or control characters
       * output is converted to a colorized html file with ansi2html
-      * also copy each matching session guid to clipboard
+      * exports all matching session guids as \$tgrep_guids env variable
+      * also copies matching session guids to xwindows clipboard
 
     Examples:
 
@@ -317,11 +302,8 @@ tloghelp()
       # open matching sessions in the program less, with ansi colorized output
       tless -i "my search string"
 
-      # get (from the X windows clipboard) the list of session guids where grep found a match
-      _teleport_session_guids="\$(xclip -selection clipboard -o)"
-
-      # run those session logs through ansi2html, in a tmp folder, open in \$_browser
-      topen \$_teleport_session_guids
+      # take the last search result, run each session log through ansi2html, in a tmp folder, open in \$_browser
+      topen \$tgrep_guids
 
       # perform a tgrep, and then directly open the matching session logs in the browser instead of stdout
       tgopen -i "my search string"
