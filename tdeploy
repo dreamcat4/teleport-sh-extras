@@ -66,9 +66,6 @@ _pkg_style_default="debian"
 # _pkg_style_default="linkself"
 
 
-
-
-
 # The "description", "maintainer", and "arch" metadata fields, passed into the "fpm" tool when creating packages
 _pkg_description="gravitational/teleport (golang). Modern privelidge-based access management for your infrastructure."
 _pkg_maintainer="info@gravitational.com"
@@ -178,17 +175,6 @@ if [ "$_bin_src_tsysinfo" ]; then
 fi
 
 
-# _out_binpath_real="${_out_dir}/bin"
-# _cfg_path_real="${_out_dir}/etc"
-# _out_binpath="$_out_binpath_real"
-
-# _cfg_path="$_cfg_path_real"
-# _cfg_file_out="${_cfg_path}/${_cfg_file}"
-
-
-
-
-
 
 # the following locations are only used when _pkg_style=debian or _pkg_style=linkself
 
@@ -214,8 +200,6 @@ teleport:
   data_dir: ${_out_dir}/data
   pid_file: ${_out_dir}/teleport.pid
 ${_token_line}${_ca_pin_line}${_auth_servers_lines}
-  # to be removed
-  # advertise_ip: PUT_NODE_ADVERTISE_IP_HERE
 
   # This next line may be changed or updated by the teleport installer's post install script
   # And my also be updated from the debconf database during package upgrades (on debian systems)
@@ -422,7 +406,6 @@ RestartSec=3
 PrivateTmp=true
 
 #NoNewPrivileges=true
-#ExecStart=${_target_bins_out}/${_pkg_name} start --listen-ip 0.0.0.0 --config $_target_cfg_file
 # ExecReload=/bin/kill -HUP \$MAINPID
 # PIDFile=${_out_dir}/${_pkg_name}.pid
 
@@ -805,7 +788,6 @@ usage:
   $_program --upgrade --nodes="node1,node2,...|all" [options]
   $_program --remove  --nodes="node1,node2,...|all" [options]
 
-
 flags:
 
   --settings
@@ -1020,7 +1002,6 @@ Examples:
 
     tdeploy --remove --node="node-112"
 
-
 EOF
 }
 
@@ -1204,7 +1185,6 @@ _parse_args()
 
         shift
     done
-
 
     # Set the node's roles. Can be any of: auth, node, proxy. Gets written to teleport.yaml
     _role_node="no"
@@ -1417,6 +1397,7 @@ _program="$(basename $0 2> /dev/null)"
 _pkg_style="$_pkg_style"
 _pkg_type="$_pkg_type"
 
+
 _try_sudo()
 {
   if [ "\$(id -u)" = "0" ]; then
@@ -1438,7 +1419,6 @@ if ! _try_sudo; then
   echo "\$(basename \$0): error: cannot elevate permissions to root (uid 0)"
   exit 1
 fi
-
 
 
 _cat_help()
@@ -1722,13 +1702,7 @@ if [ "\$_pkg_type" = "deb" ]; then
 
   set -e
 
-  # export DEBIAN_HAS_FRONTEND=1
-  # export DEBCONF_USE_CDEBCONF=1
-  # export DEBCONF_REDIR=1
-  # export DEBCONF_PACKAGE="$_pkg_name"
-
   # bug in fpm - https://github.com/jordansissel/fpm/issues/1590
-
   if [ ! "\$1" ]; then
     set - configure
   fi
@@ -1742,7 +1716,6 @@ if [ "\$_pkg_type" = "deb" ]; then
   echo "_debconf_listen_addr=\$_debconf_listen_addr"
 
   if [ "\$_debconf_listen_addr" ]; then
-    # sed -i -e "s/listen_addr: [0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/listen_addr: \${_debconf_listen_addr}/" "${_target_cfg_file}"
     sed -i -e "s/listen_addr:.*/listen_addr: \${_debconf_listen_addr}/" "${_target_cfg_file}"
   fi
   set +e
@@ -1754,7 +1727,6 @@ fi
 
 if [ "\$_listen_addr" ]; then
   set -e
-  # sed -i -e "s/listen_addr: [0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/listen_addr: \${_listen_addr}/" "${_target_cfg_file}"
   sed -i -e "s/listen_addr:.*/listen_addr: \${_listen_addr}/" "${_target_cfg_file}"
   set +e
 fi
@@ -2235,8 +2207,6 @@ _provision_archive()
 
   # begin:
   _tmp="$(TMPDIR=${HOME}/.cache mktemp --dry-run -t -d make-teleport-node-XXXXXX)"
-  # _out_dir_first_path_component="$(echo "${_out_dir}" | sed -e "s|^/||g" -e "s|/.*||g")"
-  # _archive_folder="${_tmp}/${_out_dir_first_path_component}"
   _teleport_out="${_tmp}${_out_dir}"
 
   _installerhooks="${_out_dir}/.installer-hooks"
@@ -2261,15 +2231,13 @@ _provision_archive()
 
 
   mkdir -p $_teleport_out $_installerhooks_out $_bins_out $_install_scripts_out $_systemd_out $_cfg_out
-  chmod 0750 "$_teleport_out"
+  chmod 0700 "$_teleport_out"
   cp -Rfp "${_teleport_build}/"* $_bins_out
 
   if [ "$_bin_src_tsysinfo" ] && [ -e "$_bin_src_tsysinfo" ]; then
     cp "$_bin_src_tsysinfo" "${_bins_out}/${_bin_tsysinfo}"
 
   else
-    # _tsysinfo_raw_url="https://gist.githubusercontent.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/6b995a1b7a945737e952ca902a51f907be58af7b/tsysinfo"
-    # _tsysinfo_raw_url="https://gist.githubusercontent.com/$(curl https://gist.github.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e 2> /dev/null | grep -o "dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/[^\"]*")"
     _tsysinfo_raw_url="https://raw.githubusercontent.com/dreamcat4/teleport-sh-extras/master/tsysinfo"
     wget -O "${_bins_out}/${_bin_tsysinfo}" "$_tsysinfo_raw_url"
   fi
@@ -2392,23 +2360,12 @@ _provision_archive()
       _root_transforms="$_root_transforms --transform \"s|^${_f}|/${_f}|\""
     done
 
-    # echo tar -cpz -C "$_tmp" --transform "s|^${_out_dir_first_path_component}|/${_out_dir_first_path_component}|" -f ${_setup_file} "$(basename "$_archive_folder")"
-    # tar -cpz -C "$_tmp" --transform "s|^${_out_dir_first_path_component}|/${_out_dir_first_path_component}|" -f ${_setup_file} "$(basename "$_archive_folder")"
-
-    # echo tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} "$(basename "$_archive_folder")"
-    # eval tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} "$(basename "$_archive_folder")"
-
     echo tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} .
     eval tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} .
-
-    # eval "tar -cpz -C \"$_tmp\" $_root_transforms -f ${_setup_file} \"$(basename \"$_archive_folder\")\""
-
-    # cp -Rf "$_archive_folder" ${_cwd}/
 
     _print_next_steps_tarball
 
   else
-
 
     if [ "$_pkg_type" = "deb" ]; then
 
@@ -2428,18 +2385,6 @@ EOF
 
     else
 
-#     _fpm_command="$(cat  << EOF
-# fpm --description "$_pkg_description" \
-# -m "$_pkg_maintainer" --license "apache" -a "$_arch" \
-# --directories "$_out_dir" --config-files "$_target_cfg_file" \
-# --after-install "${_installerhooks_out}/${_teleport_post_install}" \
-# --before-upgrade "${_installerhooks_out}/${_teleport_pre_uninstall}" \
-# --after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
-# --before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
-# -n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
-# EOF
-# )"
-
       _fpm_command="$(cat  << EOF
 fpm --description "$_pkg_description" \
 -m "$_pkg_maintainer" --license "apache" -a "$_arch" \
@@ -2452,26 +2397,7 @@ fpm --description "$_pkg_description" \
 EOF
 )"
 
-
-#     _fpm_command="$(cat  << EOF
-# fpm --description "$_pkg_description" \
-# -m "$_pkg_maintainer" --license "apache" -a "$_arch" \
-# --directories "$_out_dir" --config-files "$_target_cfg_file" \
-# --deb-templates "${_installerhooks_out}/deb-templates" \
-# --deb-config "${_installerhooks_out}/deb-config" \
-# --deb-after-purge "${_installerhooks_out}/deb-after-purge" \
-# --after-install "${_installerhooks_out}/${_teleport_post_install}" \
-# --after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
-# --before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
-# -n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
-# EOF
-# )"
-
-
-
     fi
-
-
 
 
     _fpm_output="$(eval $_fpm_command)"
@@ -2491,7 +2417,6 @@ EOF
     _version_greppable="$(echo "$_teleport_src_version" | sed -e "s/[^a-zA-Z0-9]/./g")"
     echo "_version_greppable=$_version_greppable"
 
-    # _setup_file="$(echo "$_fpm_output" | grep -o -E "${_pkg_name}.*${_teleport_src_version}[^\"]*")"
     _setup_file="$(echo "$_fpm_output" | grep -o -E "${_pkg_name}.*${_version_greppable}[^\"]*")"
 
     if [ ! "$_setup_file" ]; then
@@ -2609,18 +2534,6 @@ _resolve_nodes()
         exit $?
       fi
 
-
-
-      # if [ "$($_ssh ${_node} id -u -n 2> /dev/null)" != "root" ]; then
-      #   warn "cannot login to node \"$_node\" as \"$_ssh_user\", the error was:"
-
-      #   # line endings \n dont print correctly
-      #   # _short_error_msg="$($_ssh ${_node} id -u -n | sed -e "s/ \n/\n/g")"
-      #   # printf "$_short_error_msg"
-      #   $_ssh $_ssh_debug ${_node} id -u -n
-      #   exit $?
-      # fi
-
       _i="$(expr $_i + 1)"
     done
 
@@ -2668,8 +2581,6 @@ _upgrade_nodes()
 
     info "upgrading node \"${_node}\". From old version: $_old_teleport_version"
     info "upgrading node \"${_node}\". To new version:   $_new_teleport_version"
-    # echo
-    # echo ""
 
     info "copying \"${_setup_file}\" to \"${_node}:\""
     $_scp "${_setup_file}" "${_node}:"
@@ -2677,14 +2588,13 @@ _upgrade_nodes()
       err 1 "failed to $_scp setup file $_setup_file to $_node"
     fi
     echo
-    # echo ""
 
     case $_node_pkg_type in
+
       tarball|zip|tar|dir)
+
         info "unpacking archive, overwites existing files"
         $_ssh "$_node" "$_sudo tar -Pzxvf $_setup_file"
-
-        # $_ssh "$_node" "$_sudo ${_out_dir}/bin/${_teleport_post_install}"
 
         info "running post install script..."
         info $_ssh "$_node" "$_sudo nohup sh -c \"${_out_dir}/bin/${_teleport_post_install}\" > /dev/null 2>&1 &"
@@ -2692,7 +2602,6 @@ _upgrade_nodes()
       ;;
 
       binary|sh)
-        # $_ssh "$_node" "$_sudo ./${_setup_file}"
 
         info "running ${_setup_file}, overwites existing files"
         info $_ssh "$_node" "$_sudo nohup sh -c \"./${_setup_file}\" > /dev/null 2>&1 &"
@@ -2700,46 +2609,11 @@ _upgrade_nodes()
       ;;
 
       deb)
-        # _tgt_gdebi="$($_ssh "$_node" "$_sudo command -v gdebi")"
-        # if [ ! "$_tgt_gdebi" ]; then
-        #   info "installing gdebi on then target node..."
-        #   $_ssh "$_node" "$_sudo apt-get install -y gdebi"
-        # fi
-        # info "running gdebi -n ${_setup_file}"
-        # $_ssh "$_node" "$_sudo gdebi -n ${_setup_file}"
-        # echo ""
-
-        # $_ssh "$_node" "$_sudo dpkg -i ${_setup_file}"
-        # echo ""
-
-
-        # info $_ssh "$_node" "$_sudo nohup sh -c \"\" > /dev/null 2>&1 &"
-
-        # does not apply to dpkg # DEBIAN_FRONTEND=noninteractive
-
-
-
-
-# fpm flags
-# ===========
-# --deb-config /path/to/deb-config
-# --deb-templates /path/to/deb-templates
-# --deb-after-purge /path/to/deb-after-purge
-
-
-
-
-
 
         info "running DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file}"
-        # info $_ssh "$_node" "$_sudo nohup sh -c \"dpkg $_dpkg_force_conf -i ${_setup_file}\" > /dev/null 2>&1 &"
-        # $_ssh "$_node" "$_sudo nohup sh -c \"dpkg -i $_dpkg_force_conf ${_setup_file}\" > /dev/null 2>&1 &"
-
 
         info $_ssh "$_node" "$_sudo nohup sh -c \"DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file} > teleport_setup.nohup.log 2>&1 &\""
         $_ssh "$_node" "$_sudo nohup sh -c \"DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file} > teleport_setup.nohup.log 2>&1 &\""
-
-
       ;;
 
       rpm)
@@ -2783,13 +2657,9 @@ _upgrade_nodes()
     sleep $_wait_for_restart
 
     info "logging back in to check teleport came back up"
-
-    # _setup_file_on_remote="$($_ssh "$_node" "$_sudo ls ${_setup_file}" | tr -d '[:cntrl:]')"
-
     $_ssh "$_node" "$_sudo ps -l -C teleport"
 
     if [ $? -ne 0 ]; then
-    # if [  != "${_setup_file}" ]; then
       warn "cannot see teleport process running on target node \"$_node\", the error was:"
 
       # line endings \n dont print correctly
@@ -2812,12 +2682,6 @@ _upgrade_nodes()
       info "the installer output was:"
       $_ssh "$_node" "$_sudo cat teleport_setup.nohup.log"
     fi
-
-
-
-
-    # info "removing setup file from target node"
-    # $_ssh "$_node" "$_sudo rm ${_setup_file}"
 
     info "cleaning... removing \"${_setup_file}\" from target node"
     $_ssh "$_node" "$_sudo rm -f $_setup_file nohup.out teleport_setup.nohup.log"
@@ -2929,11 +2793,6 @@ _remove_nodes()
     _i="$(expr $_i + 1)"
   done
 }
-
-
-
-
-
 
 
 
