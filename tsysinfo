@@ -1,0 +1,727 @@
+#!/bin/bash
+# 
+# the only dependancy on bash ^^ is in function _socket_send() - not sure how to remove that!
+# 
+# 
+# tsysinfo  v1.0.1 ('Terse System Information')
+#
+#   Report back on certain very basic but vital aspects of system health
+#   Each as a really short one-liner, with maximum terseness / brevity
+#
+# Example Output:
+#
+#   https://gist.github.com/dreamcat4/21b67ffe135546697b5411ceb26246f1
+#
+#
+# Version History:
+# 
+# v1.0.0 (initial version)
+#   Created by: Dreamcat4 (dreamcat4@gmail.com)
+#
+# v1.0.2 - added further inline documentation
+# v1.0.3 - added link to example output
+# v1.0.4 - lshw requires elevated permissions
+# v1.0.5 - replace lshw with lsscsi
+# v1.0.6 - 'implement socket-listen' and 'socket-send'
+#          lets communication from within a container. to query hardware on the host system
+# v1.0.7 - improve output of cpu-cores to be Nc/Nt
+# v1.0.8 - fix zfs-health subcmd - broken parsing of 'zpool status'
+# v1.0.9 - changed license to apache v2.0
+#
+#
+# Notes:
+#   v1.0.0
+#   Created and tested on ubuntu 18.10 and higher
+#   requires a few optional packages for certain properties
+#   otherwise a status of "n/a" will be returned
+#
+# Contribution guidelines:
+#   Released under the general Apache v2.0 license
+#   If making further changes or improvements then Just 
+#   append a new entry to the version history and put your
+#   name underneath it as a contributor.
+#   
+#
+# Dependancies:
+#   (ubuntu) It's recommend to install the following packages:
+#
+#     apt install sysstat lm-sensors lsscsi smartmontools socat bash
+#
+#   and also to then run the following configuration script:
+#
+#     sensors-detect
+#
+#
+#
+#
+
+_program="$(basename $0)"
+
+_msg_not_available="n/a"
+
+err()
+{
+    _rc="$1"
+    shift
+    echo "${_program}: error: $@"
+    exit $_rc
+}
+
+warn()
+{
+    echo "${_program}: warning: $@"
+}
+
+
+info()
+{
+    echo "${_program}: info: $@"
+}
+
+
+_try_sudo()
+{
+    if [ "$(id -u)" = "0" ]; then
+        unset _sudo
+    else
+        if [ "$(command -v sudo)" ]; then
+            if sudo su root -c "" 2> /dev/null; then
+                export _sudo="sudo"
+            else
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+}
+
+
+_cat_help()
+{
+    cat <<- EOF
+
+    $_program:
+    Print out basic system specs, and system health diagnostic information.
+
+    usage:
+
+    $_program [subcommand|--help]
+
+    subcommands:
+
+    cpu-cores
+    cpu-temp
+    cpu-usage
+    disk-health
+    disk-usage <mountpoint>
+    disks
+    disks-worst-temp
+    dmesg-health
+    docker-status
+    fan-spin <2,4,5>
+    kernel
+    memory-usage
+    os
+    platform
+    systemd-health
+    systemctl-status <service>
+    uptime
+    zfs-health
+    socket-listen <unix.sock>
+    socket-send <unix.sock> <subcommand> [args]
+
+    --debug, -d:
+    Enable shell debugging
+    --help, -h:
+    Display this message and exit
+
+EOF
+}
+
+
+
+
+
+
+
+
+
+
+_platform()
+{
+    # report the platform architecture, for example 'x86_64'
+    uname --hardware-platform
+}
+
+_kernel()
+{
+    uname --kernel-name --kernel-release
+}
+
+_uptime()
+{
+    uptime -p | sed -e "s/^up //g"
+}
+
+_os()
+{
+    # for ubuntu
+    if command -v lsb_release > /dev/null; then
+        lsb_release -d | cut -f2
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_cpu_cores()
+{
+    # report back the number of cores(threads)
+    if [ -e "/proc/cpuinfo" ]; then
+        printf "$(grep -m1 'cpu cores' /proc/cpuinfo | sed -e 's/.*: *//g')c/$(nproc --all)t\n"
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_cpu_usage()
+{
+    # report the current and average whole-cpu usage, in percent
+    # requires the 'sysstat' package, for the command 'mpstat'
+    if [ "$(command -v mpstat)" ]; then
+
+        _idle_avg="$(mpstat | tail -1 | sed -e "s/  */ /g" | cut -d" " -f12)"
+        _load_avg="$(echo "100 - $_idle_avg" | bc)"
+
+        _idle_cur="$(mpstat 1 1 | tail -1 | sed -e "s/  */ /g" | cut -d" " -f12)"
+        _load_cur="$(echo "100 - $_idle_cur" | bc)"
+
+        echo "${_load_cur}% cur / ${_load_avg}% avg"
+
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_cpu_temp()
+{
+    # report the current cpu whole-package temperature
+    # requires the package 'lm-sensors', for the command 'sensors' (you must also run 'sensors-detect' too)
+
+    if [ "$(command -v sensors)" ]; then
+        sensors | grep -i "package" | sed -e "s/.*: *+//g" -e "s/ .*//g"
+
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_fan_spin()
+{
+    # report on fan status, alert if a specified fan sensor is reporting 0rpm 
+    # otherwise report the fan rpms, in the order given respectively
+
+    # takes a single argument, comma separated list of fans e.g. "1,2,3"
+    # requires the package 'lm-sensors', for the command 'sensors' (you must also run 'sensors-detect' too)
+    _fans="$(echo "$1" | sed -e "s/,/ /g" -e "s/fan//g")"
+
+    if [ "$(command -v sensors)" ]; then
+
+        _sensors_fans="$(sensors | grep -i fan)"
+
+        if [ "$_sensors_fans" ]; then
+
+            unset _msg
+            for _fan in $_fans; do
+                _fan_rpm="$(echo "$_sensors_fans" | grep -i "^fan${_fan}:" | sed -e "s/  */ /g" | cut -d " " -f2)"
+
+                if [ "$_fan_rpm" ]; then
+
+                    if [ "$_fan_rpm" -eq 0 ]; then
+                        _msg="${_msg}, fan${_fan} has failed"
+
+                    else
+                        _fan_rpms="${_fan_rpms}, ${_fan_rpm}rpm"
+                    fi
+
+                else
+                    _msg="${_msg}, fan${_fan}: no data"
+                fi
+            done
+
+            if [ "$_msg" ]; then
+
+                if echo "$_msg" | grep -q -i "failed"; then
+                    echo "CRITICAL: ${_msg#, }"
+
+                else
+                    echo "${_msg#, }"
+                fi
+            else
+                echo "ok (${_fan_rpms#, })"
+            fi
+        else
+            echo "$_msg_not_available"
+        fi
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_memory_usage()
+{
+    # report back the amount of real memory used vs total ram, in a human readable format
+    _free_output="$(free -h --giga | sed -e "s/  */ /g")"
+
+    _mem_used="$(echo "$_free_output" | grep "Mem:" | cut -d" " -f3)"
+    _mem_total="$(echo "$_free_output" | grep "Mem:" | cut -d" " -f2)"
+
+    echo "${_mem_used}/${_mem_total}"
+}
+
+_dmesg_health()
+{
+    # Reports back the number of errors and warnings found in the dmesg log (or 'ok' if there are none)
+    # requires the 'dmesg' command. its good for detecting lower level hardware errors
+    _dmesg="$(dmesg)"
+    _dmesg_warnings="$(echo "$_dmesg" | grep -i "] warning: ")"
+    _dmesg_errors="$(echo "$_dmesg" | grep -i "] error: ")"
+
+    if [ "$_dmesg_warnings" ] || [ "$_dmesg_errors" ]; then
+        _dmesg_num_warnings="$(echo "$_dmesg_warnings | wc -l")"
+        _dmesg_num_errors="$(echo "$_dmesg_errors | wc -l")"
+
+        _output_msg="${_dmesg_num_warnings} warnings, ${_dmesg_num_errors} errors"
+
+    else
+        echo "ok"
+    fi
+}
+
+_disks()
+{
+    # report the total number of real physical disks that are currently detected attached to the system
+    # requires the package 'lsscsi' for the command 'lsscsi'
+
+    _num_disks="$(lsscsi | wc -l)"
+
+    if [ $_num_disks -gt 0 ]; then
+        echo "$_num_disks"
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_disk_usage()
+{
+    # report the about of used vs total space for a mounted volume, and the percentage of free space remaining
+    # takes 1 argument, which is a path to the disk's mountpoint, as reported by the 'Mounted on' column of 'df'
+    # or the filesytstem location of the disk's unmounted block device e.g. /dev/sda2, as reported in the 1st column
+    # requires the command 'df', plus the sucpplementary ommand 'bc' to calculate the remaining free space
+    _disk="$1"
+    _df_output="$(df --output='used,size,pcent' -h $_disk 2> /dev/null)"
+
+    if [ "$_df_output" ]; then
+        _df_output="$(echo "$_df_output" | tail -1 | sed -e "s/  */ /g" -e "s/^ *//g")"
+
+        _used="$(echo "$_df_output" | cut -d " " -f1)"
+        _total="$(echo "$_df_output" | cut -d " " -f2)"
+        _free="$(echo "$_df_output" | cut -d " " -f3)"
+        _free="$(echo "100 - ${_free%\%}" | bc)" 
+
+        echo "${_used}/${_total} (${_free}% free)"
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_disk_health()
+{
+    # for each real physical disk detected on the system by the command 'lsscsi'
+    # check the output of smartctl -x, for the answer to: "SMART overall-health self-assessment test result"
+    # and report back any disk status of any real physical disk (that supports SMART protocol) if any of those disks
+    # have a test result status anything other than 'PASSED'
+    # requires the package 'smartmontools', for the command 'smartctl'
+    # requires the package 'lsscsi' for the command 'lsscsi'
+
+    if [ "$(command -v smartctl)" ]; then
+        _disks="$(lsscsi | sed -e "s|.*/dev/||g")"
+
+        if ! _try_sudo; then
+            echo "$_msg_not_available - sudo smartctl: failed"
+            return 1
+        fi
+
+        unset _output_msg
+        for _disk in $_disks; do
+            _disk_health="$($_sudo smartctl --health /dev/${_disk} 2>&1 | grep -i "test result:" | sed -e "s/.*test result: //g")"
+            if [ "$_disk_health" ] && [ "$_disk_health" != "PASSED" ]; then
+                _disk_name="$(lsscsi | grep "/dev/${_disk}" | sed -e "s/.*ATA *//g" -e "s| */dev/.*||g" -e "s/ [^ ]*$//g")"
+                _output_msg="${_output_msg}, ${_disk_name}(${_disk})=${_disk_health}"
+            fi
+        done
+
+        if [ "$_output_msg" ]; then
+            echo "${_output_msg#, }"
+        else
+            echo "ok"
+        fi
+
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_disks_worst_temp()
+{
+    # for each real physical disk detected on the system by the command 'lsscsi'
+    # check the output of smartctl -x, for the disks temperature information lines
+    # for the current temperature and the maximum recommended temperature
+    # if the current temperature is too close to the maximum temperature (default 10c, see below)
+    # then print out a CRITICAL: message to warn about the situation
+    # otherwise just report ok, along with the current 'worst disk temp' that is closest to that threshold
+    # requires the package 'smartmontools', for the command 'smartctl'
+    # requires the package 'lsscsi' for the command 'lsscsi'
+
+    if ! _try_sudo; then
+        echo "$_msg_not_available - sudo smartctl: failed"
+        return 1
+    fi
+
+    if [ "$(command -v smartctl)" ]; then
+        _disks="$(lsscsi | sed -e "s|.*/dev/||g")"
+
+        # set here the threshold distance in degrees C, to which to warn if the drive is nearing it's
+        # own recommended maximum temperature, as read from its own individual smart data
+        # for example, if you don't feel comfortable being within 10c, 5c or 0c of that limit
+        # _temp_critical_distance_to_reccomended_max=100 # just for testing
+        _temp_critical_distance_to_reccomended_max=10
+        # _temp_critical_distance_to_reccomended_max=5
+        # _temp_critical_distance_to_reccomended_max=3
+        # _temp_critical_distance_to_reccomended_max=0
+
+        # to find and report on the current status of the 'thermally worst' disk in your array
+        _temp_last_known_most_critical=99999
+
+        unset _output_msg _worst_disk_temp_msg _crit_disk_temp_msg
+        for _disk in $_disks; do
+            _smartctl_temp_lines="$($_sudo smartctl -x /dev/${_disk} | grep -i temperature)"
+
+            _temp_current="$(echo "$_smartctl_temp_lines" | grep "Current Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g")"
+            _temp_max_recommended="$(echo "$_smartctl_temp_lines" | grep -i "recommended Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g" -e "s|.*/||g")"
+            _temp_distance_to_max="$(echo "$_temp_max_recommended - $_temp_current" | bc)"
+
+            if [ $_temp_distance_to_max -lt $_temp_last_known_most_critical ]; then
+                _worst_disk_temp_msg="${_disk}: ${_temp_current}c/${_temp_max_recommended}c"
+            fi
+
+            if [ $_temp_distance_to_max -le $_temp_critical_distance_to_reccomended_max ]; then
+                _crit_disk_temp_msg="${_crit_disk_temp_msg}, ${_disk}:${_temp_current}c/${_temp_max_recommended}c"
+            fi
+        done
+
+        if [ "$_crit_disk_temp_msg" ]; then
+            echo "CRITICAL!!! ${_crit_disk_temp_msg#, }"
+        else
+            echo "ok (${_worst_disk_temp_msg})"
+        fi
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_zfs_health()
+{
+    # for each zpool found on the system (that is being reported by the command 'zpool')
+    # check it's status with the command 'zpool status', and either report 'ok', if all pools are 
+    # in the status 'ONLINE', otherwise report the status of any pools that are not 'ONLINE'
+    # and make a best efforts to interperet and to report back the reason for being OFFLINE, DEGRADED, etc. 
+    # requires the 'zfs' package(s), for the command 'zpool', and a working zfs filesystem loaded
+    unset _zpool_errors _output_line
+    if [ "$(command -v zpool)" ]; then
+
+        if ! zpool list -H > /dev/null 2>&1; then
+            echo "$_msg_not_available"
+            return 1
+        fi
+
+        _zpools="$(zpool list -H 2>&1 | cut -f1)"
+
+        for _zpool in $_zpools; do
+
+            _zpool_status="$(zpool status -v $_zpool 2>&1)"
+            _state="$(echo "$_zpool_status" | grep "^ *state: " | sed -e "s/^ *state: //g")"
+            _error_line="$(echo "$_zpool_status" | grep "^errors: " | sed -e "s/^errors: //g")"
+
+            if [ "$_state" = "ONLINE" ]; then
+                _output_line="${_output_line},${_zpool}=${_state}"
+            else
+
+                if echo "$_error_line" | grep -i -q "List of errors unavailable: "; then
+                    _error_detail="$(echo "$_error_line" | sed -e "s/List of errors unavailable: //g")"
+
+                elif echo "$_error_line" | grep -i -q "detected in"; then
+                    _error_detail="$(echo "$_error_line" | sed -e "s/detected in.*$/detected/g")"
+
+                elif echo "$_error_line" | grep -i -q "The following "; then
+                    _error_detail="$(echo "$_error_line" | sed -e "s/The following //g" -e "s/:$//g")"
+
+                else
+                    _error_detail="$_error_line"
+                fi
+
+                _zpool_errors=true
+                _output_line="${_output_line},!!!${_zpool}=${_state} (${_error_detail})"
+            fi
+        done
+
+
+        if [ "$_zpool_errors" ]; then
+            echo "${_output_line#,*}"
+        else
+            echo "ok"
+        fi
+
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_systemd_health()
+{
+    # check the overall health status of systemd services. if there are any failed services
+    # then just report how many total failed services there are, otherwise report 'ok'
+
+    # requires systemd, for the command 'systemctl'
+    if [ "$(command -v systemctl)" ]; then
+        _systemctl_failed="$(systemctl --all --state=failed 2> /dev/null)"
+        _num_units_failed="$(echo "$_systemctl_failed" | grep "loaded units listed" | cut -d" " -f1)"
+        if [ $_num_units_failed -gt 0 ]; then
+            echo "${_num_units_failed} failed services"
+
+        else
+            echo "ok"
+        fi
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_systemctl_status()
+{
+    # check up on the current status of the specified systemd service. takes 1 argument from the commandline
+    # which is the name of the systemd service to check, for example "docker.service"
+
+    # requires systemd, for the command 'systemctl'
+    if [ "$(command -v systemctl)" ]; then
+        _systemctl_service="$1"
+        _systemctl_output="$(systemctl status ${_systemctl_service})"
+        _service_status="$(echo "$_systemctl_output" | grep "Active: " | sed -e "s/^.*Active: //g" -e "s/ .*//g")"
+
+        if [ "$_service_status" != "active" ]; then
+            echo "$_service_status"
+        else
+            echo "ok"
+        fi
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_docker_status()
+{
+    # report back the current status of the docker daemon, if it is running or not
+    # and the current number of running containers, vs the total number of running + stopped containers
+
+    # requires systemd, for the command 'systemctl', and
+    # requires the package 'docker-ce', for the command 'docker'
+    if [ "$(command -v docker)" ]; then
+
+        _docker_service_status="$(_systemctl_status "docker.service")"
+
+        if [ "$_docker_service_status" = "ok" ]; then
+            _docker_info="$(docker info 2>&1)"
+            _num_containers_running="$(echo "$_docker_info" | grep -m1 "Running: " | sed -e "s/.*Running: //g")"
+            _num_containers_total="$(echo "$_docker_info" | grep -m1 "Containers: " | sed -e "s/.*Containers: //g")"
+            _server_version="$(echo "$_docker_info" | grep -m1 "Server Version: " | sed -e "s/.*Server Version: //g")"
+
+            echo "ok (v${_server_version}), ${_num_containers_running}/${_num_containers_total} running"
+        else
+            echo "$_docker_service_status"
+        fi
+
+    else
+        echo "$_msg_not_available"
+    fi
+}
+
+_socket_send()
+{
+    # requires the package "socat" for the command "socat"
+    # client - send 1 command, get the response, then exit
+    _socket_file="$1"
+    shift
+
+    _pid_file="/tmp/socat.pid"
+
+    # unfortunately this next line is taken from an example which requires bash
+    # don't know how to achieve the same objective in bourne sh shell / dash
+    (cat <( echo "$@" ) - | socat - "UNIX:${_socket_file}" & echo $! >&3) 3>$_pid_file | \
+    while read -r _reply; do
+
+        echo "$_reply"
+        kill $(cat "$_pid_file")
+        break
+    done
+}
+
+_serve_request()
+{
+    while true; do
+        read -r _line
+
+        if [ "$_line" = "socket-listen" ] || [ "$_line" = "socket-send" ]; then
+            echo "error: nesting sockets is not permitted"
+        else
+            _parse_args $_line
+        fi
+    done
+}
+
+_socket_listen()
+{
+    # this funny trick is using read twice over, to return subsequent output back into the front of the pipe
+    # solution: https://stackoverflow.com/a/43332/287510
+
+    # open up socat and wait
+    _socket_file="$1"
+    read | { socat "UNIX-LISTEN:${_socket_file},fork" - | _serve_request; } >/dev/fd/0
+}
+
+
+_parse_args()
+{
+    unset _arg _arg_disk_usage _socket
+    if [ ! "$1" ]; then
+        _no_args=true
+    fi
+
+    while [ "$1" ]; do
+        _arg="$1"
+
+        if [ "$_send_socket" ]; then
+            _socket_send "$_send_socket" "$@"
+            exit 0
+
+        else
+            case $_arg in
+
+                platform)           _platform;;
+kernel)             _kernel;;
+os)                 _os;;
+uptime)             _uptime;;
+cpu-cores)          _cpu_cores;;
+cpu-usage)          _cpu_usage;;
+cpu-temp)           _cpu_temp;;
+fan-spin)           _arg_fan_spin=true;;
+memory-usage)       _memory_usage;;
+dmesg-health)       _dmesg_health;;
+disks)              _disks;;
+disks-worst-temp)   _disks_worst_temp;;
+disk-usage)         _arg_disk_usage=true;;
+disk-health)        _disk_health;;
+zfs-health)         _zfs_health;;
+systemd-health)     _systemd_health;;
+systemctl-status)   _arg_systemctl_status=true;;
+docker-status)      _docker_status;;
+socket-listen)      _arg_socket_listen=true;;
+socket-send)        _arg_socket_send=true;;
+
+--debug|-d)                  _debug=true; set -x;;
+--help|-h)                   _help=true ;;
+
+*)
+if [ "$_arg_fan_spin" ]; then
+    _fans="$_arg"
+
+elif [ "$_arg_disk_usage" ]; then
+    _disk="$_arg"
+
+elif [ "$_arg_systemctl_status" ]; then
+    _systemctl_service="$_arg"
+
+elif [ "$_arg_socket_listen" ]; then
+    _listen_socket="$_arg"
+                        # while true; do
+                        #   _socket_listen "$_listen_socket"
+                        # done
+                        _socket_listen "$_listen_socket"
+                        return 0
+
+                    elif [ "$_arg_socket_send" ]; then
+                        _send_socket="$_arg"
+
+                    else
+                        warn "unrecognized argument: \"$_arg\""
+                        _cat_help
+                        exit 1
+                    fi
+                    ;;
+                esac
+            fi
+
+
+            shift
+        done
+
+        if [ "$_help" ] || [ "$_no_args" ]; then
+            _cat_help
+            exit 0
+        fi
+
+
+        if [ "$_arg_fan_spin" ]; then
+            if [ ! "$_fans" ]; then
+                err 1 "no fans specified"
+            else
+                _fan_spin "$_fans"
+            fi
+        fi
+
+        if [ "$_arg_disk_usage" ]; then
+            if [ ! "$_disk" ]; then
+                _disk="/"
+            fi
+            _disk_usage "$_disk"
+        fi
+
+        if [ "$_arg_systemctl_status" ]; then
+            if [ ! "$_systemctl_service" ]; then
+                err 1 "no systemd service specified"
+            else
+                _systemctl_status "$_systemctl_service"
+            fi
+        fi
+    }
+
+
+
+
+
+
+
+
+
+
+# =========================
+# begin:
+
+_parse_args "$@"
+
+
+
+
+
+
+
+

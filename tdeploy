@@ -1,0 +1,2971 @@
+#!/bin/sh
+#
+# tdeploy
+#
+#   A 3rd party shell script to help you deploy and update teleport nodes
+#
+#   This script can:
+#    * Create a setup package for provisioning the teleport service onto new nodes
+#    * Install the teleport service on new teleport nodes if they are setup for ssh
+#    * Update teleport service on existing teleport nodes within your infrastructure
+#    * Remove the teleport service from existing nodes within your infrastructure
+#
+#   "tdeploy --help" for more information
+#
+#   (2019) dreamcat4@gmail.com
+#   Public Domain, and Apache v2.0 license
+# 
+# Testing:
+# 
+#   The original version has been tested to work well on ubuntu linux based distributions.
+#   For the following package types: deb, binary, sh, tarball. And systemd only.
+# 
+#   Further work and provisions have been made for supporting other package types and also
+#   additional service managers other than systemsd. For example: rpm, macos_pkg, snap, 
+#   launchd, sysv, upstart, runit. Plus a few others. However expect those untested platforms
+#   not to work OOB. A little further work is required to get those other formats to work
+#   properly and as intended. Until then, they will likely throw an error - PRs welcome.
+#
+#
+
+_program="$(basename $0)"
+_program_folder="$(dirname $0)"
+
+
+if [ "$TDEPLOY_CONFIG" ]; then
+  _tdeploy_config="$TDEPLOY_CONFIG"
+else
+  _tdeploy_config="${HOME}/.tsh/${_program}.config"
+fi
+
+
+# Do not directly tweak the settings below this line, if you need to change them, first run:
+# "tdeploy --settings". To generate a confid file in your home folder
+
+# ___MARK___tdeploy_settings_begin___DO_NOT_REMOVE_THIS_LINE___
+
+# ======================================================
+# tdeploy.config
+# ======================================================
+# uncomment those settings which you wish to override
+# ======================================================
+
+
+# set the default package type. "binary" is recommended, it requires the tool makeself.sh
+_pkg_type_default="binary"
+
+
+# packaging style
+# debian     = follow the debian packaging guidelines
+# self       = self contained, everything under the same folder
+# linkself   = self-contained, but also symlink outside the teleport folder to create
+#              presence of them in system wide locations, to be debian compatible
+# "debian" or "linkself" for the pkg to be able to install and start teleport as a daemon
+_pkg_style_default="debian"
+# _pkg_style_default="self"
+# _pkg_style_default="linkself"
+
+
+
+
+
+# The "description", "maintainer", and "arch" metadata fields, passed into the "fpm" tool when creating packages
+_pkg_description="gravitational/teleport (golang). Modern privelidge-based access management for your infrastructure."
+_pkg_maintainer="info@gravitational.com"
+_arch="x86_64"
+
+_pkg_name="teleport"
+
+# when the packaging tool is not "fpm", the filename generated will start "teleport-setup"
+_setup_name="${_pkg_name}-setup"
+
+# change this if you are building executables from a different fork
+_go_src_address="github.com/gravitational/teleport"
+
+# we assume you have a valid GOPATH and go development environment already setup, for compiling
+_teleport_src_path="${GOPATH}/src/${_go_src_address}"
+_teleport_build="${_teleport_src_path}/build"
+
+# this setting just finds the local host's teleport.yaml file, whilst performing admin operations
+# this is NOT the config file used for making the installer package's default "teleport.yaml" file,
+# for that look further down, in the shell script helper function "_cat_teleport_yaml()"
+_teleport_config_search_paths="/etc /var/lib/teleport ${HOME}/.config/teleport ${HOME}/.teleport"
+
+# these 2 settings decide whether to append a token expiry date, to the filename of the generated package
+# an token expiry date is only relevant for using the "--install" and "--with-token" flags
+# unset _tsetup_include_expiry
+_tsetup_include_expiry="true"
+_expiry_seperator="__"
+
+# # the target installation folder
+# _teleport_prefix="/root"
+# _teleport_dirname=".teleport"
+_teleport_prefix="/var/lib"
+_teleport_dirname="$_pkg_name"
+_out_dir="${_teleport_prefix}/${_teleport_dirname}"
+
+# name of the systemd service file
+_teleport_service="teleport.service"
+
+# name of the teleport config file
+_cfg_file="teleport.yaml"
+
+
+# This next setting specifies the default listen ip address for the target node.
+# Normally you will only ever set this setting to either 0.0.0.0 or 127.0.0.1
+# 
+# By default, teleport daemon will try to bind to 0.0.0.0 and come up on
+# all available interfaces. This is very beneficial for automated installs
+# where each node might be getting a dynamically allocated cloud ip address
+# which is not known ahead of time. However this can also be a security risk
+# if there are multiple interfaces. Some public facing, others private facing.
+# 
+# If installing the resultant debian package interactively, then actually dconf will 
+# pause installation to throw up an ncurses prompt to give the user an opportunity
+# to override this default listen ip address. But if DEBIAN_FRONTEND=noninteractive
+# then you can either override this setting here to 127.0.0.1 (the localhost ip).
+# Or you can instead leave this as 0.0.0.0. And instead simply opt to run a couple of
+# commands behore installing. To systemctl mask and disable the systemd service and
+# therefore automatically prevent it from coming up immediately as part of the pkg
+# install. Which otherwise will happen automatically without and user intervention.
+# You can then simply "dpkg-reconfigure teleport" to manually set the listen address.
+# 
+# Or you can instead take the option override the configuration file template
+# which is embedded in your tdeploy config file and comment out the line "listen_addr: "
+# since only the 1st encountered match of "listen_addr: " is ever being overwritten
+# by the teleport packaging "post install" script.
+# 
+# Each method has it's own set of pros and cons. Depending upon the deployment scenario.
+# 
+_cfg_default_listen_addr="0.0.0.0"
+# _cfg_default_listen_addr="127.0.0.1"
+
+
+# the names of the programs being packaged
+_bin_teleport="teleport"
+_bin_tctl="tctl"
+_bin_tsh="tsh"
+
+_bins="$_bin_tctl $_bin_teleport $_bin_tsh"
+for _bin in $_bins; do
+  eval "_bin_src_${_bin}=\"${_teleport_build}/${_bin}\""
+  eval "_bins_src=\"$_bins_src \$_bin_src_${_bin}\""
+done
+
+# the names of the helper post install, and pre uninstall scripts
+_teleport_post_install="teleport-postinst"
+_teleport_pre_uninstall="teleport-prerm"
+_teleport_post_uninstall="teleport-postrm"
+
+# for debian packaging only
+_deb_templates="deb-templates"
+_deb_config="deb-config"
+
+# these settings select a very useful 3rd party helper script 'tsysinfo', to include
+# within the main teleport package. 'tsysinfo' is required for the dynamic label commands
+# that are included in the config template, which provides a useful health monitoring
+_bin_tsysinfo="tsysinfo"
+
+_bin_src_tsysinfo="${_program_folder}/${_bin_tsysinfo}"
+
+if [ ! -e "$_bin_src_tsysinfo" ]; then
+  _bin_src_tsysinfo="$(realpath $(which ${_bin_tsysinfo} 2> /dev/null) 2>/dev/null)"
+fi
+
+if [ "$_bin_src_tsysinfo" ]; then
+  _bins_src="$_bins_src $_bin_src_tsysinfo"
+  _bins="$_bins $_bin_tsysinfo"
+fi
+
+
+# _out_binpath_real="${_out_dir}/bin"
+# _cfg_path_real="${_out_dir}/etc"
+# _out_binpath="$_out_binpath_real"
+
+# _cfg_path="$_cfg_path_real"
+# _cfg_file_out="${_cfg_path}/${_cfg_file}"
+
+
+
+
+
+
+# the following locations are only used when _pkg_style=debian or _pkg_style=linkself
+
+# on any platforms that install to /usr/local/bin, instead of debian
+# then it would be most fitting to change this next setting around for the other one
+# _out_binpath_debian="/usr/local/bin"
+_out_binpath_debian="/usr/bin"
+
+_cfg_path_debian="/etc"
+_systemd_path_debian="/lib/systemd/system"
+
+_systemd_file_debian="${_systemd_path_debian}/${_teleport_service}"
+_cfg_file_debian="${_cfg_path_debian}/${_cfg_file}"
+
+
+
+
+# Perform any tweaks to the teleport.yaml configureation file here
+ _cat_teleport_yaml()
+{
+  cat << EOF
+teleport:
+  data_dir: ${_out_dir}/data
+  pid_file: ${_out_dir}/teleport.pid
+${_token_line}${_ca_pin_line}${_auth_servers_lines}
+  # to be removed
+  # advertise_ip: PUT_NODE_ADVERTISE_IP_HERE
+
+  # This next line may be changed or updated by the teleport installer's post install script
+  # And my also be updated from the debconf database during package upgrades (on debian systems)
+  listen_addr: $_cfg_default_listen_addr
+
+  # However any 2nd,3rd subsequent re-occurence or this same setting will not be updated by the
+  # teleport post install script. Therefore if you would like to manually override "listen_addr" here...
+  # Then first comment out the above prior setting ^^ and keep it intact but disabled (dont delete it).
+  # listen_addr: $_cfg_default_listen_addr
+
+  connection_limits:
+    max_connections: 15000
+    max_users: 250
+  log:
+    output: stderr
+    severity: INFO
+
+auth_service:
+  enabled: "$_role_auth"
+
+proxy_service:
+  enabled: "$_role_proxy"
+
+ssh_service:
+  enabled: "$_role_node"
+
+  labels:
+    pkg-type: $_pkg_type
+
+  commands:
+  - name: cpu-cores
+    command: [${_target_bins_out}/${_bin_tsysinfo}, cpu-cores]
+    period: 1h0m0s
+
+  # # requires the package 'lm-sensors', for the command 'sensors' (you must also run 'sensors-detect' too)
+  # - name: cpu
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, cpu-temp]
+  #   period: 1h0m0s
+
+  # # requires the 'sysstat' package, for the command 'mpstat'
+  # - name: cpu
+  #   command: [/bin/sh, -c, "sleep 1; ${_target_bins_out}/${_bin_tsysinfo} cpu-usage"]
+  #   period: 0h57m0s
+
+  # # requires the package 'smartmontools', for the command 'smartctl'
+  # # requires the package 'lsscsi' for the command 'lsscsi'
+  # - name: disks
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, disk-health]
+  #   period: 1h0m0s
+
+  - name: /
+    command: [${_target_bins_out}/${_bin_tsysinfo}, disk-usage, "/"]
+    period: 1h0m0s
+
+  - name: disks
+    command: [${_target_bins_out}/${_bin_tsysinfo}, disks]
+    period: 1h0m0s
+
+  # # requires the package 'smartmontools', for the command 'smartctl'
+  # # requires the package 'lsscsi' for the command 'lsscsi'
+  # - name: disktemps
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, disks-worst-temp]
+  #   period: 1h0m0s
+
+  - name: dmesg
+    command: [${_target_bins_out}/${_bin_tsysinfo}, dmesg-health]
+    period: 1h0m0s
+
+  # # requires systemd, for the command 'systemctl', and
+  # # requires the package 'docker-ce', for the command 'docker'
+  # - name: docker
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, docker-status]
+  #   period: 1h0m0s
+
+  # # requires the package 'lm-sensors', for the command 'sensors' (you must also run 'sensors-detect' too)
+  # # takes a single argument, comma separated list of fans e.g. "1,2,3"
+  # - name: fans
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, fan-spin, "1,2,3"]
+  #   period: 1h0m0s
+
+  # # requires systemd, for the command 'systemctl'
+  # - name: fancontrol.service
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, systemctl-status, "fancontrol.service"]
+  #   period: 1h0m0s
+
+  - name: kernel
+    command: [${_target_bins_out}/${_bin_tsysinfo}, kernel]
+    period: 1h0m0s
+
+  - name: mem
+    command: [${_target_bins_out}/${_bin_tsysinfo}, memory-usage]
+    period: 1h0m0s
+
+  - name: os
+    command: [${_target_bins_out}/${_bin_tsysinfo}, os]
+    period: 1h0m0s
+
+  - name: platform
+    command: [${_target_bins_out}/${_bin_tsysinfo}, platform]
+    period: 1h0m0s
+
+  # # requires systemd, for the command 'systemctl'
+  # - name: systemd-health
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, systemd-health]
+  #   period: 1h0m0s
+
+  - name: up
+    command: [${_target_bins_out}/${_bin_tsysinfo}, uptime]
+    period: 1h0m0s
+
+  # # requires the 'zfs' package(s), for the command 'zpool', and a working zfs filesystem loaded
+  # - name: zfs
+  #   command: [${_target_bins_out}/${_bin_tsysinfo}, zfs-health]
+  #   period: 1h0m0s
+EOF
+}
+
+
+
+
+# Perform any tweaks to you platform's service files below
+
+
+
+_cat_teleport_service_launchd()
+{
+  # Not tested - needs testing
+  # /Library/LaunchDaemons/teleport.plist
+  cat << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Disabled</key><false/>
+    <key>Label</key><string>${_pkg_name}</string>
+    <key>Program</key><string>${_target_bins_out}/${_pkg_name}</string>
+    <key>ProgramArguments</key><array>
+      <string>${_target_bins_out}/${_pkg_name}</string>
+      <string>start</string>
+        <string>--config</string>
+        <string>${_target_cfg_file}</string>
+    </array>
+    <key>KeepAlive</key> <true/>
+    <key>StandardOutPath</key><string>/var/log/${_pkg_name}-stdout.log</string>
+    <key>StandardErrorPath</key><string>/var/log/${_pkg_name}-stderr.log</string>
+    <key>WorkingDirectory</key><string>${_out_dir}</string>
+    <key>UserName</key><string>root</string>
+    <key>GroupName</key><string>root</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+    </dict>
+  </dict>
+</plist>
+EOF
+}
+
+_cat_teleport_service_runit_run()
+{
+  # Not tested - needs testing
+  # /etc/service/teleport/run
+  cat << EOF
+#! /bin/sh
+
+# Send stderr to stdout so svlogd catches all output.
+exec 2>&1
+
+PROGRAM="${_target_bins_out}/${_pkg_name}"
+# Set up the arguments  (for \$@)
+set -- "start" "--config" "$_target_cfg_file"
+
+exec env chpst -u "root:root" -/ "/" "\$PROGRAM" "\$@"
+EOF
+}
+
+_cat_teleport_service_runit_log()
+{
+  # Not tested - needs testing
+  # /etc/service/teleport/log/run
+  cat << EOF
+#! /bin/sh
+
+exec svlogd -tt /var/log/${_pkg_name}
+
+EOF
+}
+
+ _cat_teleport_service_systemd()
+{
+  # Tested - ok
+  # /lib/systemd/system/teleport.service
+  cat << EOF
+[Unit]
+Description=Teleport SSH Service
+After=network.target 
+AssertPathExists=${_out_dir}
+
+[Service]
+Type=simple
+# User=root
+# Group=root
+# Restart=always
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+
+#NoNewPrivileges=true
+#ExecStart=${_target_bins_out}/${_pkg_name} start --listen-ip 0.0.0.0 --config $_target_cfg_file
+# ExecReload=/bin/kill -HUP \$MAINPID
+# PIDFile=${_out_dir}/${_pkg_name}.pid
+
+WorkingDirectory=${_out_dir}
+ExecStart=${_target_bins_out}/${_pkg_name} start --config $_target_cfg_file
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+_cat_teleport_service_sysv()
+{
+  # Not tested - needs testing
+  # /etc/init.d/teleport
+  cat << EOF
+#!/bin/sh
+# Init script for ${_pkg_name}
+# Maintained by 
+# Generated by pleaserun.
+# Implemented based on LSB Core 3.1:
+#   * Sections: 20.2, 20.3
+#
+### BEGIN INIT INFO
+# Provides:          ${_pkg_name}
+# Required-Start:    \$remote_fs \$syslog
+# Required-Stop:     \$remote_fs \$syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: 
+# Description:       $_pkg_description
+### END INIT INFO
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+export PATH
+
+name=${_pkg_name}
+program=${_target_bins_out}/${_pkg_name}
+args=start\ --config\ $_target_cfg_file
+pidfile="/var/run/\$name.pid"
+user="root"
+group="root"
+chroot="/"
+chdir="$_out_dir"
+nice=""
+
+
+# If this is set to 1, then when \`stop\` is called, if the process has
+# not exited within a reasonable time, SIGKILL will be sent next.
+# The default behavior is to simply log a message "program stop failed; still running"
+KILL_ON_STOP_TIMEOUT=0
+
+# When loading default and sysconfig files, we use \`set -a\` to make
+# all variables automatically into environment variables.
+set -a
+# [ -r /etc/default/${_pkg_name} ] && . /etc/default/${_pkg_name}
+# [ -r /etc/sysconfig/${_pkg_name} ] && . /etc/sysconfig/${_pkg_name}
+set +a
+
+[ -z "\$nice" ] && nice=0
+
+trace() {
+  logger -t "/etc/init.d/${_pkg_name}" "\$@"
+}
+
+emit() {
+  trace "\$@"
+  echo "\$@"
+}
+
+start() {
+
+  # Ensure the log directory is setup correctly.
+  if [ ! -d "/var/log" ]; then 
+    mkdir "/var/log"
+    chown "\$user":"\$group" "/var/log"
+    chmod 755 "/var/log"
+  fi
+
+
+  # Setup any environmental stuff beforehand
+  
+
+  # Run the program!
+  
+  chroot --userspec "\$user":"\$group" "\$chroot" sh -c "
+    
+    cd "\$chdir"
+    exec "\$program" \$args >> /var/log/${_pkg_name}-stdout.log 2>> /var/log/${_pkg_name}-stderr.log &
+
+  # Generate the pidfile from here. If we instead made the forked process
+  # generate it there will be a race condition between the pidfile writing
+  # and a process possibly asking for status.
+  echo \$! > \$pidfile
+
+  emit "\$name started"
+  return 0
+}
+
+stop() {
+  # Try a few times to kill TERM the program
+  if status ; then
+    pid=\$(cat "\$pidfile")
+    trace "Killing \$name (pid \$pid) with SIGTERM"
+    kill -TERM \$pid
+    # Wait for it to exit.
+    for i in 1 2 3 4 5 ; do
+      trace "Waiting \$name (pid \$pid) to die..."
+      status || break
+      sleep 1
+    done
+    if status ; then
+      if [ "\$KILL_ON_STOP_TIMEOUT" -eq 1 ] ; then
+        trace "Timeout reached. Killing \$name (pid \$pid) with SIGKILL.  This may result in data loss."
+        kill -KILL \$pid
+        emit "\$name killed with SIGKILL."
+      else
+        emit "\$name stop failed; still running."
+      fi
+    else
+      emit "\$name stopped."
+    fi
+  fi
+}
+
+status() {
+  if [ -f "\$pidfile" ] ; then
+    pid=\$(cat "\$pidfile")
+    if ps -p \$pid > /dev/null 2> /dev/null ; then
+      # process by this pid is running.
+      # It may not be our pid, but that's what you get with just pidfiles.
+      # TODO(sissel): Check if this process seems to be the same as the one we
+      # expect. It'd be nice to use flock here, but flock uses fork, not exec,
+      # so it makes it quite awkward to use in this case.
+      return 0
+    else
+      return 2 # program is dead but pid file exists
+    fi
+  else
+    return 3 # program is not running
+  fi
+}
+
+force_stop() {
+  if status ; then
+    stop
+    status && kill -KILL \$(cat "\$pidfile")
+  fi
+}
+
+
+case "\$1" in
+  force-start|start|stop|force-stop|restart)
+    trace "Attempting '\$1' on ${_pkg_name}"
+    ;;
+esac
+
+case "\$1" in
+  force-start)
+    PRESTART=no
+    exec "\$0" start
+    ;;
+  start)
+    status
+    code=\$?
+    if [ \$code -eq 0 ]; then
+      emit "\$name is already running"
+      exit \$code
+    else
+      start
+      exit \$?
+    fi
+    ;;
+  stop) stop ;;
+  force-stop) force_stop ;;
+  status)
+    status
+    code=\$?
+    if [ \$code -eq 0 ] ; then
+      emit "\$name is running"
+    else
+      emit "\$name is not running"
+    fi
+    exit \$code
+    ;;
+  restart)
+    
+    stop && start
+    ;;
+  *)
+    echo "Usage: \$SCRIPTNAME {start|force-start|stop|force-start|force-stop|status|restart}" >&2
+    exit 3
+  ;;
+esac
+
+exit \$?
+EOF
+}
+
+_cat_teleport_service_upstart()
+{
+  # Not tested - needs testing
+  # /etc/init/teleport.conf
+  cat << EOF
+description     "$_pkg_description"
+start on filesystem or runlevel [2345]
+stop on runlevel [!2345]
+
+respawn
+umask 022
+chroot /
+chdir $_out_dir
+setuid root
+setgid root
+
+
+script
+  # When loading default and sysconfig files, we use \`set -a\` to make
+  # all variables automatically into environment variables.
+  set -a
+  # [ -r /etc/default/${_pkg_name} ] && . /etc/default/${_pkg_name}
+  # [ -r /etc/sysconfig/${_pkg_name} ] && . /etc/sysconfig/${_pkg_name}
+  set +a
+  exec $_target_bins_out/${_pkg_name} "start" "--config" "$_target_cfg_file"
+end script
+EOF
+}
+
+
+
+
+
+
+
+
+
+# ___MARK___tdeploy_settings_end_____DO_NOT_REMOVE_THIS_LINE___
+
+
+__disabled_generate_service_file_templates()
+{
+
+# patch pleaserun runit error
+_pr_gempath="$(VISUAL=echo gem open pleaserun)"
+sudo sed -i -e "s#\"/service\" do |path|#\"/service\" do#g" -e "s#validate do#validate do |path|#g" "${_pr_gempath}/lib/pleaserun/platform/runit.rb"
+
+_platforms="launchd runit systemd sysv upstart"
+for _p in $_platforms; do
+pleaserun --overwrite --platform $_p --no-install-actions --install-prefix ${_p} --chdir /z_out_dir /z_out_binpath/teleport start --config z_cfg_file_out
+done
+
+}
+
+ _cat_teleport_service_files()
+{
+  _platforms="$@"
+
+  for _p in $_platforms; do
+    case $_p in
+
+      launchd)
+        _service_folder="${_outpath}/Library/LaunchDaemons"
+        mkdir -p "$_service_folder"
+
+        _cat_teleport_service_launchd > "${_service_folder}/${_pkg_name}.plist"
+      ;;
+
+      runit)
+        _service_folder="${_outpath}/etc/service/${_pkg_name}"
+        mkdir -p "${_service_folder}/log"
+
+        _cat_teleport_service_runit_run > "${_service_folder}/run"
+        _cat_teleport_service_runit_log > "${_service_folder}/log/run"
+      ;;
+
+      systemd)
+        _service_folder="${_outpath}/${_systemd_path_debian}"
+        mkdir -p "$_service_folder"
+
+        _cat_teleport_service_systemd > "${_service_folder}/${_pkg_name}.service"
+      ;;
+
+      sysv)
+        _service_folder="${_outpath}/etc/init.d"
+        mkdir -p "$_service_folder"
+
+        _cat_teleport_service_sysv > "${_service_folder}/${_pkg_name}"
+      ;;
+
+      upstart)
+        _service_folder="${_outpath}/etc/init"
+        mkdir -p "$_service_folder"
+
+        _cat_teleport_service_upstart > "${_service_folder}/${_pkg_name}.conf"
+      ;;
+
+      *)
+        err 1 "platform \"$_platform\" not recognized. valid values are: launchd runit systemd sysv upstart"
+      ;;
+    esac
+  done
+}
+
+err()
+{
+  _rc="$1"
+  shift
+  echo "${_program}: error: $@"
+  exit $_rc
+}
+
+warn()
+{
+  echo "${_program}: warning: $@"
+}
+
+info()
+{
+  echo "${_program}: info: $@"
+}
+
+dwarn()
+{
+  [ "$__debug" ] && echo "${_program}: debug: warning: $@"
+}
+
+dinfo()
+{
+  [ "$__debug" ] && echo "${_program}: debug: info: $@"
+}
+
+if [ -e "$_tdeploy_config" ]; then
+  info "loaded $_tdeploy_config"
+  . "$_tdeploy_config"
+fi
+
+_cat_tdeploy_config()
+{
+  _script="$0"
+
+  if [ ! -e "$(realpath "$_script")" ]; then
+    err 1 "cannot find this script on disk \"${0}\"..." "so cannot extract settings from it."
+  fi
+  _tdeploy_header_start_marker="# ___MARK___tdeploy_settings_begin___DO_NOT_REMOVE_THIS_LINE___"
+  _tdeploy_header_end_marker="# ___MARK___tdeploy_settings_end_____DO_NOT_REMOVE_THIS_LINE___"
+
+
+
+  awk "/${_tdeploy_header_start_marker}/{flag=1;next}/${_tdeploy_header_end_marker}/{flag=0}flag" "$_script"
+}
+
+
+_tdeploy_settings()
+{
+  if [ ! -e "$_tdeploy_config" ]; then
+    mkdir -p "$(dirname "$_tdeploy_config")"
+    _cat_tdeploy_config > "$_tdeploy_config"
+    sed -i -e "s/^/# /g" -e "s/^# $//g" "$_tdeploy_config"
+    info "generated file: \"$_tdeploy_config\". for your user settings"
+    exit 0
+
+  else
+    err 1 "file already exists: \"$_tdeploy_config\"." "please remove / rename your old config."
+  fi
+}
+
+_cat_help()
+{
+    cat << EOF
+
+$_program:
+  Options are passed to 'tctl nodes add', for the token generation.
+  Creates a setup package for provisioning 1 new teleport node.
+  Prints out all necessary instructions for how to use it.
+
+usage:
+
+  $_program --settings
+  $_program --install [options]
+  $_program --upgrade --nodes="node1,node2,...|all" [options]
+  $_program --remove  --nodes="node1,node2,...|all" [options]
+
+
+flags:
+
+  --settings
+    Generates a settings file for tdeploy's own settings. Allows a user to override
+    any of the variables at the top of this script. ! Not teleport's "teleport.yaml".
+
+    Accepts under configuration an optional environment variable "TDEPLOY_CONFIG="
+    To specify alternative configuration file(s). Useful for different node types.
+    Otherwise the default file location will be read/written (~/.tsh/tdeploy.config).
+
+  --install
+    Create a generic installer package, for installing teleport to another machine.
+    It assumes that you have a working $GOPATH and go environment from which to
+    locally build and compile the teleport binaries from source.
+
+  --with-token
+    The --install action will by default generate a generic setup installer file.
+    Designed for widespread disributeion. However then you will also need to 
+    manage yourself the seperate distribution of the one-time use tokens which can
+    be generated by executing 'tctl nodes add'.
+
+    Use this flag to get this script to perform that missing step for you. It will
+    then instead generate a customized installer package. That is exactly the same
+    as the generic package, however with a single 1 time use token already included.
+    As a part of it's 'teleport.yaml' configuration file. This unique package can
+    then be used to provision exactly 1 node to join this cluster. So is only good
+    for provisioning a single node. (however you can re-run this program as many times
+    as you wish in order to generate multple installation packages, each with their 
+    own unique token). For a purely file-based provisioning.
+
+  --ssh
+    This flag will override the default transport mechanism, which is teleports' native
+    commandline `tsh ssh` command. This is necessary for the --install action if you
+    have also supplied the --nodes flag and wish to install teleport onto them via ssh.
+
+    So the --install --ssh --nodes="..." flags, this script will attempt with ssh and scp.
+
+    This mode requires calling ssh many times, so is not pleasant to type your ssh password
+    up to 10 times per node. It's only worth using if you have setup ssh so  that it does
+    not require to enter a password everytime. Either with a key file, or an ~/.ssh/config
+    entry which there specifies a password in that ssh host's entry. Or ssh-agent. Whatever.
+
+    This feature also requires the ability to either ssh in as root, or otherwise be able
+    to elevate permissions on the target machine with the `sudo` command.
+
+  --ssh-user
+    This optional flag works for both tsh and ssh transport mechanisms. It is to
+    specify the remote username to login as for any nodes that you to not prefix
+    explicitly with an username@node syntax. Otherwise the decision as to what user
+    to login as will be left to either teleport's tsh command, or ssh's client config.
+
+  --upgrade
+    Update the specified --nodes= (nodes which are already joined)
+    Use the flag --nodes=all to perform the action on all known nodes
+
+  --remove
+    Uninstall teleport from the specified --nodes=
+    Use the flag --nodes=all to perform the action on all known nodes
+
+  --nodes
+    Comma or space separated list ("quoted list") of teleport nodes to perform 
+    the action on. Must have sudo or 'root' login permission on those target nodes.
+    The special node named "all" selects all of the nodes returned by the command:
+    tsh ls | grep -o "^[^ -]*" | grep -v "Node"
+
+    In the context of --install action with the --ssh flag, this --nodes flag 
+    specifies a list of ssh hosts, and uses ssh as the transport mechanism.
+    In the context of --upgrade and --remove actions, then teleport / tsh is used.
+
+  --long-version
+    For a longer version string that includes a git commit short hash within it.
+
+  --debian-revision
+    To specify an increasing integer number greater than 1 for 2nd, 3rd pkg revisions
+    that have the same teleport version number. Which is then tagged on at the end
+    of the debian version string to differentiate subsequent revisions of a package.
+    Otherwise the default '-1' will be the unique debian revision for deb packages.
+
+  --force-confnew
+  --force-confold
+  --force-confdef
+  --force-confask
+    For --install and --upgrade operations. This flag is specific to deb (debian)
+    distributions. The default behaviour is to NOT overwrite an existing config
+    file (teleport.yaml) on the target node. I.e. --force-confold. Applying a 
+    different flag to change that behaviour. Applying the flag "--force-confnew"
+    is necessary to push out new updates to the "teleport.yaml" config file
+    The flag is passed to command "dpkg -i file.deb". See: dpkg --force-help
+
+  --init-types=
+
+    Comma or space separated list ("quoted list") of system service managers to
+    include support for in the generated installation package. Possible values:
+    launchd, runit, systemd, sysv and upstart. NOTE: only "systemd" was tested.
+    Therefore some additional work may be required for the other init types.
+    Service files were created from templates of fpm helper tool "pleaserun".
+
+  --pkg-style=<debian|self|linkself>
+
+    Select the packaging style. Determines the filesystem layout once installed.
+
+    debian     = follow debian fs hierachy packaging guidelines, the default
+    self       = self contained, everything under the same folder
+    linkself   = self-contained, but also symlink outside the teleport folder to create
+                 presence of them in system wide locations, to be debian compatible
+    "debian" or "linkself" for the pkg to be able to install and start teleport as a daemon
+
+  --pkg-type=<tarball|zip|tar|dir|binary|sh|deb>
+
+    For the --install and --upgrade commands
+
+    Select the type of package to generate as the installer. Defaults to "binary"
+    and so creates a self extracting installer using the tool "makeself.sh".
+    Therefore you must first download "makeself.sh" and put it on your \$PATH
+    before running this script. This is the default packaging option.
+
+    "tarball" is a .tar.gz archive which requires no packager tool dependancies
+
+    All of the other supported package formats require the optional "fpm" ruby gem.
+    Those package types are documented in the fpm documentation. "fpm --help".
+
+    Note: Not all package types are tested or supported yet! Some package types will
+    throw an error and therefore will require extra work, to implement those missing
+    handler functions in the tdeploy script. These further possible types are:
+
+    <rpm|osxpkg|solaris|freebsd|pkgin|puppet|apk|pacman|snap>
+
+  For the --upgrade and --remove commands
+
+    If the existing node has a label "pkg-type=", then that will be used to determine
+    the package type. This node label is created by default by the --install command.
+    Therefore this flag is then only applied to those existing nodes which do not have
+    an existing "pkg-type=" label.
+
+Node provisioning options:
+
+If the action is --install or --upgrade. Then these optional flags are passed
+down to 'tctl nodes add' provisioning command. "tctl help" for more information.
+
+  --roles <auth,node,proxy>
+    Comma-separated list of roles for the new node to assume. Defaults to 'node'.
+
+  --debug, -d
+    Enable verbose logging of 'tctl nodes add' command
+
+  --token
+    Custom token to use, autogenerated if not provided
+
+  --config, -c
+    Path to auth server's teleport.yaml config file (for calling "tctl nodes add")
+    This is not the one being packaged and distributed to the target node. Which
+    is generated on the fly from the shell function "_cat_teleport_yaml".
+    This argument is also needed for the --upgrade command, which invokes 'tctl'.
+
+  --ttl
+    Authentication token lifetime in hms, eg '30m' or '10h30m15s'
+
+  --help, -h:
+    Display this message and exit
+
+
+Examples:
+
+  Create a new tdeploy user configuration file, in the default location
+  This allows a more fine-grained control over the package generation
+  Including editing of generated teleport.yaml, service init files, etc.
+
+    tdeploy --settings
+
+
+  Create a new CUSTOM tdeploy user configuration file, for multiple configs.
+  This is then used whenver prefixing the same TDEPLOY_CONFIG="<filename>"
+  to any of your subsequent tdeploy commands. So selecting the tdeploy config.
+
+    TDEPLOY_CONFIG="/path/to/my-tdeploy-auth.config" tdeploy --settings
+
+
+  Use an alternative tdeploy configuration file, and provision for a new auth server
+
+    export TDEPLOY_CONFIG="/path/to/my-tdeploy-auth.config"
+    tdeploy --install --with-token --roles=auth
+
+
+  Create a custom installer package (including token), for debian distributions with
+  a debian files layout, and include a service file for debian's default systemd
+
+    tdeploy --install --with-token --pkg-type=deb
+
+
+  Create a generic self extracting binary with the init types for sysv and systemd.
+  Without including the per-node provisioning token
+
+    tdeploy --install --init-types="sysv systemd"
+
+
+  Create an rpm, with a custom token value, and token lifetime of 3.5 hours
+
+    tdeploy --install --pkg-type=rpm --with-token --token="my_token" --ttl="3h30m"
+
+
+  Check up on what is being generated, creates a local folder as the pkg
+
+    tdeploy --install --pkg-type=dir
+
+
+  Upgrade all of the nodes in my cluster to the current build in my \$GOPATH
+
+    tdeploy --upgrade --nodes=all
+
+
+  Uninstall teleport from a specific node named "node-112"
+
+    tdeploy --remove --node="node-112"
+
+
+EOF
+}
+
+_parse_args()
+{
+  unset _arg _arg_nodes _arg_pkg_style _arg_pkg_type _arg_debian_revision _arg_ssh_user _ssh _long_version _arg_config _arg_roles _arg_ttl _arg_token
+  if [ ! "$1" ]; then
+    _no_args=true
+  fi
+
+    while [ "$1" ]; do
+        _arg="$1"
+
+        case $_arg in
+
+          --settings)           _tdeploy_settings  ;;
+          --install)            _action="install"  ;;
+          --upgrade)            _action="upgrade"  ;;
+          --remove)             _action="remove"   ;;
+
+          --with-token)         _with_token="true" ;;
+
+          --nodes*)
+
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _nodes="$(echo "$_arg" | sed -e "s|^--nodes=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_nodes=true 
+            fi
+          ;;
+
+          --force-conf*)
+            case $_arg in
+              --force-confnew|--force-confold|--force-confdef|--force-confask)
+                _dpkg_force_conf="$_arg"
+              ;;
+
+              *)
+                warn "unrecognized argument: \"$_arg\""
+                _cat_help
+                exit 1
+              ;;
+            esac
+          ;;
+
+          --pkg-style*)
+
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _pkg_style="$(echo "$_arg" | sed -e "s|^--pkg-style=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_pkg_style=true 
+            fi
+          ;;
+
+          --pkg-type*)
+
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _pkg_type="$(echo "$_arg" | sed -e "s|^--pkg-type=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_pkg_type=true 
+            fi
+          ;;
+
+          --init-types*)
+
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _init_types="$(echo "$_arg" | sed -e "s|^--init-types=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_init_types=true 
+            fi
+          ;;
+
+          --debian-revision*)
+
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _debian_revision="$(echo "$_arg" | sed -e "s|^--debian-revision=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_debian_revision=true 
+            fi
+          ;;
+
+          --long-version)               _long_version="true" ;;
+
+          --ssh)                        _ssh="true" ;;
+
+          --ssh-user*)
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _ssh_user="$(echo "$_arg" | sed -e "s|^--ssh-user=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_ssh_user=true 
+            fi
+          ;;
+
+          --debug|-d)                   _tctl_debug_flag="--debug" ;;
+
+          --config*|-c*)
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _teleport_config="$(echo "$_arg" | sed -e "s|^--config=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_config=true 
+            fi
+          ;;
+
+          --roles*)
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _tctl_roles_flag="$_arg"
+            else
+              _arg_roles=true 
+            fi
+          ;;
+
+          --ttl*)
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              _ttl="$(echo "$_arg" | sed -e "s|^--ttl=||" -e "s|\"||g")"
+            else
+              _arg_ttl=true 
+            fi
+          ;;
+
+          --token*)
+            if [ "$_arg" != "${_arg%=*}" ]; then
+              # _token="$(echo "$_arg" | sed -e "s|^--token=||" -e "s|\"||g")"
+              _tctl_token_flag="$_arg"
+            else
+              _arg_token=true 
+            fi
+          ;;
+
+          --help|-h)                   _help=true ;;
+
+          *)
+            if [ "$_arg_nodes" ]; then
+              unset _arg_nodes
+              _nodes="$_arg"
+
+            elif [ "$_arg_pkg_style" ]; then
+              unset _arg_pkg_style
+              _pkg_style="$_arg"
+
+            elif [ "$_arg_pkg_type" ]; then
+              unset _arg_pkg_type
+              _pkg_type="$_arg"
+
+            elif [ "$_arg_init_types" ]; then
+              unset _arg_init_types
+              _init_types="$_arg"
+
+            elif [ "$_arg_debian_revision" ]; then
+              unset _arg_debian_revision
+              _debian_revision="$_arg"
+
+            elif [ "$_arg_ssh_user" ]; then
+              unset _arg_ssh_user
+              _ssh_user="$_arg"
+
+            elif [ "$_arg_config" ]; then
+              unset _arg_config
+              _teleport_config="$_arg"
+
+            elif [ "$_arg_roles" ]; then
+              unset _arg_roles
+              # _roles="$_arg"
+            _tctl_roles_flag="--roles=${_arg}"
+
+            elif [ "$_arg_ttl" ]; then
+              unset _arg_ttl
+              _ttl="$_arg"
+
+            elif [ "$_arg_token" ]; then
+              unset _arg_token
+              # _token="$_arg"
+              _tctl_token_flag="--token=${_arg}"
+
+            else
+              warn "unrecognized argument: \"$_arg\""
+              _cat_help
+              exit 1
+            fi
+          ;;
+        esac
+
+        shift
+    done
+
+
+    # Set the node's roles. Can be any of: auth, node, proxy. Gets written to teleport.yaml
+    _role_node="no"
+    _role_auth="no"
+    _role_proxy="no"
+
+    if [ "$_tctl_roles_flag" ]; then
+      _roles="$(echo "$_tctl_roles_flag" | sed -e "s|^--roles=||" -e "s|\"||g" -e "s/,/ /g")"
+      for _role in $_roles; do
+        case $_role in
+
+          auth)   _role_auth="yes"   ;;
+          node)   _role_node="yes"   ;;
+          proxy)  _role_proxy="yes"  ;;
+
+          *)
+            err 1 "role \"$_role\" not recognized. valid values are: auth, node, proxy"
+          ;;
+        esac
+      done
+
+    else
+      _role_node="yes"
+    fi
+
+    if [ "$_nodes" ]; then
+      _nodes="$(echo "$_nodes" | sed -e "s/,/ /g")"
+    fi
+
+    if [ "$_init_types" ]; then
+      _init_types="$(echo "$_init_types" | sed -e "s/,/ /g")"
+    fi
+
+    if [ ! "$_dpkg_force_conf" ]; then
+      # set the default dpkg --force-conf option
+      _dpkg_force_conf="--force-confold"
+    fi
+
+    if [ ! "$_pkg_style" ]; then
+      # set the default installer package type
+      _pkg_style="$_pkg_style_default"
+    fi
+
+    if [ ! "$_pkg_type" ]; then
+      # set the default installer package type
+      _pkg_type="$_pkg_type_default"
+    fi
+
+    if [ "$_help" ]; then
+        _cat_help
+        exit 0
+    fi
+}
+
+
+_print_next_steps_tarball()
+{
+cat << EOF
+
+Package archive file is now ready as:
+  - $_setup_file
+${_with_token_msg}
+* scp / copy this file on to the target machine.
+* Then run the following commands as ROOT:
+
+tar -Pzxvf $_setup_file
+${_out_dir}/bin/${_teleport_post_install}
+
+extract to an alternate directory with 'tar -C /'
+EOF
+}
+
+
+_print_next_steps_binary()
+{
+cat << EOF
+
+
+teleport-setup
+================================================
+Installer setup executable generated:
+
+  ${_setup_file}
+${_with_token_msg}
+* scp / copy this file on to the target machine.
+* Then execute it on the target node as ROOT:
+
+  sudo ./${_setup_file}
+
+EOF
+}
+
+_check_provisioning_deps()
+{
+  if [ "$_pkg_type" = "binary" ]; then
+    if [ ! "$(command -v makeself.sh)" ]; then
+      err 2 "cannot find the program dependancy \"makeself.sh\". please install it onto your \$PATH"
+    fi
+
+  elif [ "$_pkg_type" = "tarball" ]; then
+    info "selected tarball packaging type"
+
+  else
+    if [ ! "$(command -v fpm)" ]; then
+      err 2 "cannot find the program dependancy \"fpm\" (a ruby gem). please install it onto your \$PATH"
+    fi
+  fi
+}
+
+
+_cat_deb_templates()
+{
+cat << EOF
+Template: ${_pkg_name}/listen_addr
+Type: string
+Default: 0.0.0.0
+Description: What IP address should teleport bind to?
+ Listen address (ip) to bind to, for this teleport node.
+
+EOF
+}
+
+_cat_deb_config()
+{
+cat << EOF
+#!/bin/sh
+
+set -e
+
+# bug in fpm - https://github.com/jordansissel/fpm/issues/1590
+if [ ! "\$1" ]; then
+  set - configure
+fi
+
+# Source debconf library.
+. /usr/share/debconf/confmodule
+
+# Run template
+db_input high ${_pkg_name}/listen_addr || true
+db_go
+
+#DEBHELPER#
+
+exit 0
+EOF
+}
+
+ _cat_teleport_post_uninstall()
+{
+    cat << EOF
+#!/bin/sh
+
+_pkg_type="$_pkg_type"
+
+if [ "\$_pkg_type" = "deb" ]; then
+
+  _deb_purge()
+  {
+    rm -rf /var/cache/${_pkg_name}
+    if [ -e /usr/share/debconf/confmodule ]
+    then
+      # bug in fpm - https://github.com/jordansissel/fpm/issues/1590
+      if [ ! "\$1" ]; then
+        set - purge
+      fi
+
+      # Source debconf library and purge db
+      . /usr/share/debconf/confmodule
+      db_purge
+    fi
+  }
+
+  set -e
+
+  case "\$1" in
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+
+    purge)
+      _deb_purge
+    ;;
+
+    *)
+      _deb_purge
+      # echo "postrm called with unknown argument '\$1'" >&2
+      # exit 1
+    ;;
+  esac
+fi
+
+#DEBHELPER#
+set +e
+
+# exit 0
+
+EOF
+}
+
+
+
+ _cat_teleport_post_install()
+{
+    cat << EOF
+#!/bin/sh
+
+_program="$(basename $0 2> /dev/null)"
+[ "$_program" ] || _program="$_teleport_post_install"
+
+_pkg_style="$_pkg_style"
+_pkg_type="$_pkg_type"
+
+_try_sudo()
+{
+  if [ "\$(id -u)" = "0" ]; then
+    unset _sudo
+  else
+    if [ "\$(command -v sudo)" ]; then
+      if sudo su root -c "" 2> /dev/null; then
+        export _sudo="sudo"
+      else
+        return 1
+      fi
+    else
+      return 1
+    fi
+  fi
+}
+
+if ! _try_sudo; then
+  echo "\$(basename \$0): error: cannot elevate permissions to root (uid 0)"
+  exit 1
+fi
+
+
+
+_cat_help()
+{
+    cat << EOH
+
+\$_program:
+  Perform post-installation routines. This script should be get automatically
+  by most installers (self extracting, deb, rpm, etc). But not when manually
+  extracting teleport from a tarball or zip archive.
+
+usage:
+
+  \$_program [--listen-addr=0.0.0.0]
+
+flags:
+
+  --listen-addr
+
+    For debian based systems then you should set the debconf setting instead
+    Which is "${_pkg_name}/listen_addr" in the debconf database.
+
+    The default setting is for teleport to be configured to bind to 0.0.0.0
+    as the listen address and immediately come up listening on all interfaces.
+
+    You can use this optional flag to override that. And set your own ip.
+    Or pass in the value with then env var TELEPORT_LISTEN_ADDR= instead.
+
+    If you wish to avoid binding to any public address then use 127.0.0.1.
+    Since this script will then immediately try to bring up teleport service.
+
+EOH
+}
+
+
+_parse_args()
+{
+  unset _arg _arg_nodes _arg_pkg_style _arg_pkg_type _arg_config _arg_roles _arg_ttl _arg_token
+  if [ ! "\$1" ]; then
+    _no_args=true
+  fi
+
+    while [ "\$1" ]; do
+        _arg="\$1"
+
+        case \$_arg in
+
+          --listen-addr*)
+
+            if [ "\$_arg" != "\${_arg%=*}" ]; then
+              _listen_addr="\$(echo "\$_arg" | sed -e "s|^--listen-addr=||" -e "s|^-c=||" -e "s|\"||g")"
+            else
+              _arg_listen_addr=true 
+            fi
+          ;;
+
+          --help|-h)                   _help=true ;;
+
+          *)
+            if [ "\$_arg_listen_addr" ]; then
+              unset _arg_listen_addr
+              _listen_addr="\$_arg"
+
+            # else
+            #   warn "unrecognized argument: \"\$_arg\""
+            #   _cat_help
+            #   exit 1
+            fi
+          ;;
+        esac
+
+        shift
+    done
+
+    if [ "\$_help" ]; then
+        _cat_help
+        exit 0
+    fi
+
+
+    if [ ! "\$_listen_addr" ] && [ "\$TELEPORT_LISTEN_ADDR" ]; then
+      _listen_addr="\$TELEPORT_LISTEN_ADDR"
+    fi
+}
+
+
+_parse_args "$@"
+
+
+
+# _select_choice_external_ip()
+# {
+#     echo -n "type the number between [] or 'c' to cancel: "
+#     read -rsn1 _index
+
+#     _index="\$(echo "\$_index" | tr -d '\n')"
+
+#   case \$_index in
+#     c)
+#       echo
+#       echo "Installation cancelled."
+#       return 1
+#       ;;
+
+#       ''|*[!0-9]*) echo ""; _select_choice_external_ip;;
+
+#       *)
+#       _external_ip="\$(echo "\$_external_ips" | sed "\${_index}q;d")"
+#       if [ ! "\$_external_ip" ]; then
+#         echo ""; _select_choice_external_ip
+#       fi
+#       ;;
+#   esac
+# }
+
+# _get_external_ip()
+# {
+#   # get 1st external ip addresses
+#   _external_ips="\$(ip addr | grep -o "inet[^/]*" | grep -v "127.0." | cut -d " " -f 2)"
+#   _num_external_ips="\$(echo "\$_external_ips" | wc -l)"
+
+#   if [ \$_num_external_ips -gt 1 ]; then
+#     echo "Select External ip:"
+
+#     _i=1
+#     for _ip in \$_external_ips; do
+#       echo "[\${_i}] \$_ip"
+#       _i="\$(expr \$_i + 1)"
+#     done
+
+#     _select_choice_external_ip && echo ""
+
+#   elif [ \$_num_external_ips -lt 1 ]; then
+#     echo "error: no external ip addresses found. Perhaps they are not configured yet for this node?"
+#     return 1
+
+#   else
+#     _external_ip="\$_external_ips"
+#   fi
+#   echo "external ip selected!"
+#   echo "=\${_external_ip}"
+# }
+
+_get_init()
+{
+  unset _init
+
+  if strings /sbin/init | grep -q "launchd"; then
+    _init="launchd"
+
+  elif strings /sbin/init | grep -q "runit"; then
+    _init="runit"
+
+  elif strings /sbin/init | grep -q "/lib/systemd"; then
+    _init="systemd"
+
+  elif strings /sbin/init | grep -q "sysvinit"; then
+    _init="sysv"
+
+  elif strings /sbin/init | grep -q "upstart"; then
+    _init="upstart"
+
+  else
+    _init=""
+
+    if [ "\$(command -v inxi)" ]; then
+      _inxi_init="\$(inxi -Ixxx | grep -i -o -E "Init: [^ ]*" | sed -e "s/Init: //g")"
+
+      if [ "\$_inxi_init" ]; then
+        _init="\$_inxi_init"
+      fi
+    fi
+  fi
+
+  echo "\$_init"
+}
+
+_try_kill_service()
+{
+  _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+
+  if [ "\$_teleport_pid" ]; then
+    kill -HUP \$_teleport_pid
+    sleep 3
+
+    _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+    if [ "\$_teleport_pid" ]; then
+      return 1
+    else
+      return 0
+    fi
+  else
+    return 0
+  fi
+}
+
+_try_stop_service()
+{
+  _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+
+  if [ "\$_teleport_pid" ] && [ "\$_wait_for_stop" ]; then
+    sleep "\$_wait_for_stop"
+  fi
+
+  _retry_count="3"
+  _i=\$_retry_count
+  while [ \$_i -gt 0 ]; do
+    if _try_kill_service; then
+      return 0
+    fi
+    _i="\$(expr \$_i - 1)"
+  done
+
+  echo "error: an instance of teleport is already running and cannot be shut down."
+  echo "we tried to kill the teleport service \$_retry_count times times, but it's still running"
+  echo "please stop the existing teleport process (pid=\${_teleport_pid}), and try again."
+  exit 1
+}
+
+
+_stop_service()
+{
+  _wait_for_stop=2
+
+  case \$_init in
+
+    launchd)
+      \$_sudo launchctl unload -w /Library/LaunchDaemons/${_teleport_service}.plist
+    ;;
+
+    runit)
+      \$_sudo sv stop $_teleport_service
+    ;;
+
+    systemd)
+      if systemctl is-active --quiet teleport; then
+        echo "Stopping systemd ${_teleport_service}..."
+        \$_sudo systemctl stop $_teleport_service
+        \$_sudo systemctl disable $_teleport_service
+        \$_sudo systemctl mask $_teleport_service
+        \$_sudo systemctl reload
+      fi
+    ;;
+
+    sysv)
+      \$_sudo service $_teleport_service stop
+    ;;
+
+    upstart)
+      \$_sudo initctl stop $_teleport_service
+    ;;
+
+    *)
+      _wait_for_stop=0
+    ;;
+  esac
+
+  _try_stop_service
+
+}
+
+_init="\$(_get_init)"
+#_stop_service
+
+
+# echo "We need to know the external ip address, for teleport to advertise itself on."
+
+# if ! _get_external_ip; then
+#   echo "error: Sorry but teleport cannot provision without an external ip address."
+#   echo "For more information see: https://github.com/gravitational/teleport/issues/2770"
+#   exit 1
+# fi
+
+
+# echo -n "Writing external ip ${_external_ip} into ${_target_cfg_file}..."
+# sed -i -e "s/PUT_NODE_ADVERTISE_IP_HERE/\${_external_ip}/g" "${_target_cfg_file}"
+# echo " Done."
+
+
+if [ "\$_pkg_type" = "deb" ]; then
+
+  set -e
+
+  # export DEBIAN_HAS_FRONTEND=1
+  # export DEBCONF_USE_CDEBCONF=1
+  # export DEBCONF_REDIR=1
+  # export DEBCONF_PACKAGE="$_pkg_name"
+
+  # bug in fpm - https://github.com/jordansissel/fpm/issues/1590
+
+  if [ ! "\$1" ]; then
+    set - configure
+  fi
+
+  # Source debconf library.
+  . /usr/share/debconf/confmodule
+
+  db_get ${_pkg_name}/listen_addr
+  _debconf_listen_addr="\$RET"
+
+  echo "_debconf_listen_addr=\$_debconf_listen_addr"
+
+  if [ "\$_debconf_listen_addr" ]; then
+    # sed -i -e "s/listen_addr: [0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/listen_addr: \${_debconf_listen_addr}/" "${_target_cfg_file}"
+    sed -i -e "s/listen_addr:.*/listen_addr: \${_debconf_listen_addr}/" "${_target_cfg_file}"
+  fi
+  set +e
+fi
+
+#DEBHELPER#
+
+
+
+if [ "\$_listen_addr" ]; then
+  set -e
+  # sed -i -e "s/listen_addr: [0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/listen_addr: \${_listen_addr}/" "${_target_cfg_file}"
+  sed -i -e "s/listen_addr:.*/listen_addr: \${_listen_addr}/" "${_target_cfg_file}"
+  set +e
+fi
+
+
+if [ "\$_pkg_style" = "linkself" ]; then
+
+  echo -n "Symlinking teleport binaries into ${_out_binpath_debian}..."
+  \$_sudo mkdir -p "${_out_binpath_debian}"
+
+  for _bin in $_bins; do
+    if [ -e "${_target_bins_out}/\${_bin}" ]; then
+      if [ -f "${_out_binpath_debian}/\${_bin}" ] && [ ! -h "${_out_binpath_debian}/\${_bin}" ]; then
+        cp --backup=numbered --no-dereference --preserve=mode,timestamps -f "${_out_binpath_debian}/\${_bin}" "${_out_binpath_debian}/\${_bin}.old"
+        \$_sudo rm -rf "${_out_binpath_debian}/\${_bin}"
+      fi
+
+      \$_sudo ln -sf "${_target_bins_out}/\${_bin}" ${_out_binpath_debian}/
+    fi
+  done
+  echo " Done."
+
+  if [ -e "${_target_cfg_file}" ]; then
+    if [ -f "${_cfg_file_debian}" ] && [ ! -h "${_cfg_file_debian}" ]; then
+      echo -n "Backing up old configuration file..."
+      cp --backup=numbered --no-dereference --preserve=mode,timestamps -f "${_cfg_file_debian}" "${_cfg_file_debian}.prev"
+      echo " Done."
+    fi
+
+    echo -n "Symlinking $_cfg_file into ${_cfg_path_debian}..."
+    \$_sudo ln -sf "$_target_cfg_file" "$_cfg_file_debian"
+    echo " Done."
+  fi
+
+  case \$_init in
+
+    launchd)
+      echo "Symlinking service file..."
+      \$_sudo ln -sf ${_out_dir}/Library/LaunchDaemons/${_teleport_service}.plist /Library/LaunchDaemons/
+    ;;
+
+    runit)
+      echo "Symlinking service file..."
+      \$_sudo ln -sf ${_out_dir}/etc/service/${_teleport_service} /etc/service/
+    ;;
+
+    systemd)
+      echo "Installing service file..."
+      # \$_sudo cp -f ${_out_dir}${_systemd_file_debian} ${_systemd_path_debian}/
+      \$_sudo ln -sf ${_out_dir}${_systemd_file_debian} ${_systemd_path_debian}/
+    ;;
+
+    sysv)
+      echo "Symlinking service file..."
+      \$_sudo ln -sf ${_out_dir}/etc/init.d/${_teleport_service} /etc/init.d/
+    ;;
+
+    upstart)
+      echo "Symlinking service file..."
+      \$_sudo ln -sf ${_out_dir}/etc/init/${_teleport_service}.conf /etc/init/
+    ;;
+
+    *)
+      sleep 0
+    ;;
+  esac
+  echo " Done."
+fi
+
+unset _service_installed
+if [ "\$_pkg_style" = "debian" ] || [ "\$_pkg_style" = "linkself" ]; then
+
+  case \$_init in
+
+    launchd)
+      if [ -e "/Library/LaunchDaemons/${_teleport_service}.plist" ]; then
+        \$_sudo launchctl load -w /Library/LaunchDaemons/${_teleport_service}.plist
+        _service_installed=true
+      fi
+    ;;
+
+    runit)
+      if [ -e "/etc/service/${_teleport_service}" ]; then
+        \$_sudo sv restart $_teleport_service
+        _service_installed=true
+      fi
+    ;;
+
+    systemd)
+      if [ -e "${_systemd_file_debian}" ]; then
+        echo "Starting ${_teleport_service}..."
+        \$_sudo systemctl daemon-reload
+        \$_sudo systemctl enable ${_teleport_service}
+        \$_sudo systemctl restart ${_teleport_service}
+        _service_installed=true
+      fi
+    ;;
+
+    sysv)
+      if [ -e "/etc/init.d/${_teleport_service}" ]; then
+        \$_sudo service $_teleport_service restart
+        _service_installed=true
+      fi
+    ;;
+
+    upstart)
+      if [ -e "/etc/init/${_teleport_service}.conf" ]; then
+        \$_sudo initctl restart $_teleport_service
+        _service_installed=true
+      fi
+    ;;
+
+    *)
+      sleep 0
+    ;;
+  esac
+fi
+
+echo "Installed: \$(${_target_bins_out}/teleport version)"
+echo "Installation complete."
+
+if [ ! "\$_service_installed" ]; then
+  cat << EOF2
+
+NOTICE:
+=======
+Daemon startup script not installed! You will need to make a new service startup script.
+
+Start the teleport daemon with:
+  ${_out_binpath_debian}/teleport start --config $_target_cfg_file
+
+Stop the daemon with:
+  kill -HUP \\\$(cat ${_out_dir}/teleport.pid)
+
+EOF2
+fi
+
+EOF
+}
+
+_cat_teleport_pre_uninstall()
+{
+    cat << EOF
+#!/bin/sh
+
+_pkg_style="$_pkg_style"
+
+_try_sudo()
+{
+  if [ "\$(id -u)" = "0" ]; then
+    unset _sudo
+  else
+    if [ "\$(command -v sudo)" ]; then
+      if sudo su root -c "" 2> /dev/null; then
+        export _sudo="sudo"
+      else
+        return 1
+      fi
+    else
+      return 1
+    fi
+  fi
+}
+
+if ! _try_sudo; then
+  echo "\$(basename \$0): error: cannot elevate permissions to root (uid 0)"
+  exit 1
+fi
+
+_get_init()
+{
+  unset _init
+
+  if strings /sbin/init | grep -q "launchd"; then
+    _init="launchd"
+
+  elif strings /sbin/init | grep -q "runit"; then
+    _init="runit"
+
+  elif strings /sbin/init | grep -q "/lib/systemd"; then
+    _init="systemd"
+
+  elif strings /sbin/init | grep -q "sysvinit"; then
+    _init="sysv"
+
+  elif strings /sbin/init | grep -q "upstart"; then
+    _init="upstart"
+
+  else
+    _init=""
+
+    if [ "\$(command -v inxi)" ]; then
+      _inxi_init="\$(inxi -Ixxx | grep -i -o -E "Init: [^ ]*" | sed -e "s/Init: //g")"
+
+      if [ "\$_inxi_init" ]; then
+        _init="\$_inxi_init"
+      fi
+    fi
+  fi
+
+  echo "\$_init"
+}
+
+_try_kill_service()
+{
+  _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+
+  if [ "\$_teleport_pid" ]; then
+    kill -HUP \$_teleport_pid
+    sleep 3
+
+    _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+    if [ "\$_teleport_pid" ]; then
+      return 1
+    else
+      return 0
+    fi
+  else
+    return 0
+  fi
+}
+
+_try_stop_service()
+{
+  _teleport_pid="\$(ps cax | grep -m1 -E "teleport$" | sed -e "s/^ *//g" | cut -d " " -f1)"
+
+  if [ "\$_teleport_pid" ] && [ "\$_wait_for_stop" ]; then
+    sleep "\$_wait_for_stop"
+  fi
+
+  _retry_count="3"
+  _i=\$_retry_count
+  while [ \$_i -gt 0 ]; do
+    if _try_kill_service; then
+      return 0
+    fi
+    _i="\$(expr \$_i - 1)"
+  done
+
+  echo "error: an instance of teleport is already running and cannot be shut down."
+  echo "we tried to kill the teleport service \$_retry_count times times, but it's still running"
+  echo "please stop the existing teleport process (pid=\${_teleport_pid}), and try again."
+  exit 1
+}
+
+
+_stop_service()
+{
+  _wait_for_stop=2
+
+  case \$_init in
+
+    launchd)
+      \$_sudo launchctl unload -w /Library/LaunchDaemons/${_teleport_service}.plist
+    ;;
+
+    runit)
+      \$_sudo sv stop $_teleport_service
+    ;;
+
+    systemd)
+      if systemctl is-active --quiet teleport; then
+        echo "Stopping systemd ${_teleport_service}..."
+        \$_sudo systemctl stop $_teleport_service
+        \$_sudo systemctl disable $_teleport_service
+        \$_sudo systemctl mask $_teleport_service
+        \$_sudo systemctl reload
+      fi
+    ;;
+
+    sysv)
+      \$_sudo service $_teleport_service stop
+    ;;
+
+    upstart)
+      \$_sudo initctl stop $_teleport_service
+    ;;
+
+    *)
+      _wait_for_stop=0
+    ;;
+  esac
+
+  _try_stop_service 
+}
+
+_init="\$(_get_init)"
+_stop_service
+
+if [ "\$_pkg_style" = "linkself" ]; then
+
+  case \$_init in
+
+    launchd)
+      if [ -h "/Library/LaunchDaemons/${_teleport_service}.plist" ]; then
+        \$_sudo rm -rf "/Library/LaunchDaemons/${_teleport_service}.plist"
+      fi
+    ;;
+
+    runit)
+      if [ -h "/etc/service/${_teleport_service}" ]; then
+        \$_sudo rm -rf "/etc/service/${_teleport_service}"
+      fi
+    ;;
+
+    systemd)
+      if [ -e "$_systemd_file_debian" ] || [ -h "$_systemd_file_debian" ]; then
+        echo "Removing systemd service file ${_systemd_file_debian}."
+        \$_sudo rm -rf "$_systemd_file_debian"
+      fi
+    ;;
+
+    sysv)
+      if [ -h "/etc/init.d/${_teleport_service}" ]; then
+        \$_sudo rm -rf "/etc/init.d/${_teleport_service}"
+      fi
+    ;;
+
+    upstart)
+      if [ -h "/etc/init/${_teleport_service}.conf" ]; then
+        \$_sudo rm -rf "/etc/init/${_teleport_service}.conf"
+      fi
+    ;;
+
+    *)
+      sleep 0
+    ;;
+  esac
+
+  if [ -h "$_cfg_file_debian" ]; then
+    \$_sudo rm -rf "${_cfg_file_debian}"
+  fi
+
+  if [ "$_out_binpath_debian" ]; then
+    echo -n "Unlinking teleport binaries from ${_out_binpath_debian}..."
+
+    for _bin in $_bins; do
+      if [ -h "${_out_binpath_debian}/\${_bin}" ]; then
+        \$_sudo rm -rf "${_out_binpath_debian}/\${_bin}"
+      fi
+    done
+
+    echo " Done."
+  fi
+
+fi
+
+
+echo "Done."
+
+EOF
+}
+
+_find_teleport_config()
+{
+  # find config file
+  if [ "$_teleport_config" ] && [ ! -e "$_teleport_config" ]; then
+    err 1 "cannot find teleport configuration file \"$_teleport_config\""
+  fi
+
+  if [ ! "$_teleport_config" ]; then
+    unset _teleport_config_found
+    for _folder in $_teleport_config_search_paths; do
+      if [ -e "${_folder}/teleport.yaml" ]; then
+        _teleport_config="${_folder}/teleport.yaml"
+        _teleport_config_found=true
+      fi
+    done
+
+    if [ ! "$_teleport_config_found" ]; then
+      err 1 "cannot find teleport configuration file, we looked in: $_teleport_configig_search_paths"
+    fi
+    _teleport_config="${_teleport_config}"
+  fi
+}
+
+_provision_archive()
+{
+  # create package folder structure
+  _cwd="$PWD"
+
+  _check_provisioning_deps
+
+  # build teleport binaries
+  go get $_go_src_address || err 1 "failed to fetch go src $_go_src_address"
+
+  if [ ! -e "${_teleport_src_path}" ]; then
+    err 2 "cannot find ${_teleport_src_path}"
+  fi
+
+  if [ ! -e "$_bin_src_teleport" ]; then
+      cd "$_teleport_src_path"
+      make clean
+      make full
+  fi
+
+  # check build
+  if [ ! -d "$_teleport_build" ]; then
+    err 2 "cannot find folder $_teleport_build"
+  fi
+
+  # check binaries
+  for _bin in $_bins_src; do
+    if [ ! -e "$_bin" ]; then
+      err 2 "cannot find binary $_bin"
+    fi
+  done
+
+  _teleport_src_version="$($_bin_src_teleport version | sed -e "s/Teleport *//g" -e "s/ /_/g" -e "s/.*git://g" -e "s/_go.*//g" -e "s/^[vV]//g")"
+
+  if [ ! "$_long_version" ]; then
+    _teleport_src_version="$(echo "$_teleport_src_version" | sed -e "s/[a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9]$//g" -e "s/-g*$//g")"
+  fi
+
+  if [ "$_pkg_type" = "deb" ]; then
+    if [ "$_debian_revision" ]; then
+      _teleport_src_version="${_teleport_src_version}-${_debian_revision}"
+    else
+      _teleport_src_version="${_teleport_src_version}-1"
+    fi
+  fi
+
+
+  if [ "$_with_token" ]; then
+
+    _find_teleport_config
+
+    # calculate token expiry date from its lifetime
+    if [ ! "$_ttl" ]; then
+      _ttl="30m"
+    fi
+
+    _ttl_tctl_flag="--ttl=${_ttl}"
+    _ttl_date_flag="$(echo "$_ttl" | sed  -e "s/s$/SECONDS/g"  -e "s/m$/MINUTES/g"  -e "s/h$/HOURS/g")"
+    # _expiry_date="$(date -d "+${_ttl_date_flag}" "+expires-%H.%M%p__%a-%d-%b-%Y" | tr "[:upper:]" "[:lower:]")"
+    _expiry_date="$(date -d "+${_ttl_date_flag}" "+expires-%H.%M%p-%a-%d-%b-%Y" | tr "[:upper:]" "[:lower:]")"
+
+
+    _tctl_flags="$_tctl_debug_flag --config=${_teleport_config} $_tctl_roles_flag $_ttl_tctl_flag $_tctl_token_flag"
+
+    # generate a new token
+    echo tctl nodes add $_tctl_flags
+    _tctl_nodes_add_output="$(tctl nodes add $_tctl_flags)" || err 2 "could not generate 1 time use token."
+
+
+
+    _node_join_cmd="$(echo "$_tctl_nodes_add_output" | grep -A4 -E "^> teleport start")"
+    _node_join_cmd="${_out_dir}/bin/${_node_join_cmd#> } --debug --config $_target_cfg_file"
+
+    _token="$(echo "$_node_join_cmd" | grep -i "\--token=" | sed -e "s/.*=//g" -e "s/ .*$//g")"
+    _token_line="  auth_token: \"${_token}\"
+"
+    _token_hash_short="$(echo "$_token" | md5sum | head -c 5)"
+
+    _ca_pin="$(echo "$_node_join_cmd" | grep -i "\--ca-pin=" | sed -e "s/.*=//g" -e "s/ .*$//g")"
+    _ca_pin_line="  ca_pin: \"${_ca_pin}\"
+"
+
+    _auth_server="$(echo "$_node_join_cmd" | grep -i "\--auth-server=" | sed -e "s/.*=//g" -e "s/ .*$//g")"
+    _auth_servers_lines="  auth_servers:
+  - \"${_auth_server}\"
+"
+
+  elif [ "$_action" = "upgrade" ]; then
+
+    _ca_pin="$(tctl $_tctl_debug_flag --config=${_teleport_config} status | grep -i "CA pin" | sed -e "s/CA pin  *//g")"
+    _ca_pin_line="  ca_pin: \"${_ca_pin}\"
+"
+    _auth_server="$(tctl $_tctl_debug_flag --config=${_teleport_config} get auth | grep -E " *addr:" | sed -e "s/  *addr: *//g")"
+    _auth_servers_lines="  auth_servers:
+  - \"${_auth_server}\"
+"
+  fi
+
+
+
+
+
+  # begin:
+  _tmp="$(TMPDIR=${HOME}/.cache mktemp --dry-run -t -d make-teleport-node-XXXXXX)"
+  # _out_dir_first_path_component="$(echo "${_out_dir}" | sed -e "s|^/||g" -e "s|/.*||g")"
+  # _archive_folder="${_tmp}/${_out_dir_first_path_component}"
+  _teleport_out="${_tmp}${_out_dir}"
+
+  _installerhooks="${_out_dir}/.installer-hooks"
+  _installerhooks_out="${_tmp}${_installerhooks}"
+
+  if [ "$_pkg_style" = "debian" ]; then
+    _outpath="$_tmp"
+    _bins_out="${_outpath}${_out_binpath_debian}"
+    _cfg_out="${_outpath}${_cfg_path_debian}"
+    _target_bins_out="${_out_binpath_debian}"
+    _target_cfg_file="${_cfg_file_debian}"
+
+  else
+    _outpath="$_teleport_out"
+    _bins_out="${_outpath}/bin"
+    _cfg_out="${_outpath}"
+    _target_bins_out="${_out_dir}/bin"
+    _target_cfg_file="${_out_dir}/${_cfg_file}"
+  fi
+
+  _systemd_out="${_outpath}${_systemd_path_debian}"
+
+
+  mkdir -p $_teleport_out $_installerhooks_out $_bins_out $_install_scripts_out $_systemd_out $_cfg_out
+  chmod 0750 "$_teleport_out"
+  cp -Rfp "${_teleport_build}/"* $_bins_out
+
+  if [ "$_bin_src_tsysinfo" ] && [ -e "$_bin_src_tsysinfo" ]; then
+    cp "$_bin_src_tsysinfo" "${_bins_out}/${_bin_tsysinfo}"
+
+  else
+    # _tsysinfo_raw_url="https://gist.githubusercontent.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/6b995a1b7a945737e952ca902a51f907be58af7b/tsysinfo"
+    _tsysinfo_raw_url="https://gist.githubusercontent.com/$(curl https://gist.github.com/dreamcat4/1010d224fee2402fb0d934bb0e281f0e 2> /dev/null | grep -o "dreamcat4/1010d224fee2402fb0d934bb0e281f0e/raw/[^\"]*")"
+    wget -O "${_bins_out}/${_bin_tsysinfo}" "$_tsysinfo_raw_url"
+  fi
+  chmod +x "${_bins_out}/${_bin_tsysinfo}"
+
+  if [ "$_pkg_type" = "deb" ]; then
+    _cat_deb_templates           > ${_installerhooks_out}/${_deb_templates}
+    _cat_deb_config              > ${_installerhooks_out}/${_deb_config}
+    _cat_teleport_post_uninstall > ${_installerhooks_out}/${_teleport_post_uninstall}
+  fi
+
+
+  _cat_teleport_post_install  > ${_installerhooks_out}/${_teleport_post_install}
+  chmod +x ${_installerhooks_out}/${_teleport_post_install}
+
+  _cat_teleport_pre_uninstall > ${_installerhooks_out}/${_teleport_pre_uninstall}
+  chmod +x ${_installerhooks_out}/${_teleport_pre_uninstall}
+
+
+  # create custom configuration files
+  _cat_teleport_yaml > ${_cfg_out}/${_cfg_file}
+
+  if [ ! "$_init_types" ]; then
+
+    case $_pkg_type in
+
+      tarball|zip|tar|dir|binary|sh|puppet)
+        _init_types="runit systemd sysv upstart"
+      ;;
+
+      deb|rpm|pacman)
+        _init_types="systemd"
+      ;;
+
+      osxpkg)
+        _init_types="launchd"
+      ;;
+
+      solaris)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      pkgin|freebsd)
+        err 1 "pkg_type \"$_pkg_type\" is not handled because there is already a freebsd port. use --pkg-type=dir instead to get the teleport.yaml config file. exiting."
+      ;;
+
+      apk)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      snap)
+        _init_types="systemd"
+      ;;
+
+      *)
+          err 1 "unrecognized pkg_type \"$_pkg_type\", don't know what to do / no handler for writing a service file. exiting."
+      ;;
+    esac
+
+  fi
+
+  _cat_teleport_service_files $_init_types
+
+
+
+
+  if [ "$_with_token" ]; then
+    echo
+    echo "Manual installation:"
+    echo "================================================"
+    echo "Not required! Instead use the installation package provided below."
+    echo
+    printf "$_tctl_nodes_add_output\n"
+  fi
+
+
+  cd $_tmp
+
+
+  _setup_file="${_setup_name}_${_teleport_src_version}"
+
+  if [ "$_with_token" ]; then
+    _setup_file="${_setup_file}_${_token_hash_short}"
+
+    if [ "$_tsetup_include_expiry" ]; then
+      _setup_file="${_setup_file}${_expiry_seperator}${_expiry_date}"
+    fi
+  fi
+
+  if [ "$_with_token" ]; then
+    _with_token_msg="
+* Already includes the one-time registration token."
+  else
+    _with_token_msg=""
+  fi
+
+
+  if [ "$_pkg_type" = "binary" ]; then
+
+    _setup_file="${_setup_file}"
+    echo makeself.sh --sha256 --needroot --target / . "${_setup_file}" "Installing teleport" ${_installerhooks}/${_teleport_post_install}
+    makeself.sh --sha256 --needroot --target / . "${_setup_file}" "Installing teleport" ${_installerhooks}/${_teleport_post_install}
+
+    _print_next_steps_binary
+
+  elif [ "$_pkg_type" = "tarball" ]; then
+    # create tarball
+    _setup_file="${_setup_file}.tar.gz"
+
+    echo
+    echo "makeself: Creating setup program..."
+    echo "================================================"
+    echo
+
+
+    echo ls
+    ls
+
+    for _f in $(ls); do
+      _root_transforms="$_root_transforms --transform \"s|^${_f}|/${_f}|\""
+    done
+
+    # echo tar -cpz -C "$_tmp" --transform "s|^${_out_dir_first_path_component}|/${_out_dir_first_path_component}|" -f ${_setup_file} "$(basename "$_archive_folder")"
+    # tar -cpz -C "$_tmp" --transform "s|^${_out_dir_first_path_component}|/${_out_dir_first_path_component}|" -f ${_setup_file} "$(basename "$_archive_folder")"
+
+    # echo tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} "$(basename "$_archive_folder")"
+    # eval tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} "$(basename "$_archive_folder")"
+
+    echo tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} .
+    eval tar -cpz -C "$_tmp" $_root_transforms -f ${_setup_file} .
+
+    # eval "tar -cpz -C \"$_tmp\" $_root_transforms -f ${_setup_file} \"$(basename \"$_archive_folder\")\""
+
+    # cp -Rf "$_archive_folder" ${_cwd}/
+
+    _print_next_steps_tarball
+
+  else
+
+
+    if [ "$_pkg_type" = "deb" ]; then
+
+      _fpm_command="$(cat  << EOF
+fpm --description "$_pkg_description" \
+-m "$_pkg_maintainer" --license "apache" -a "$_arch" \
+--directories "$_out_dir" --config-files "$_target_cfg_file" \
+--deb-templates "${_installerhooks_out}/${_deb_templates}" \
+--deb-config "${_installerhooks_out}/${_deb_config}" \
+--after-install "${_installerhooks_out}/${_teleport_post_install}" \
+--after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
+--before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
+--after-remove  "${_installerhooks_out}/${_teleport_post_uninstall}" \
+-n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
+EOF
+)"
+
+    else
+
+#     _fpm_command="$(cat  << EOF
+# fpm --description "$_pkg_description" \
+# -m "$_pkg_maintainer" --license "apache" -a "$_arch" \
+# --directories "$_out_dir" --config-files "$_target_cfg_file" \
+# --after-install "${_installerhooks_out}/${_teleport_post_install}" \
+# --before-upgrade "${_installerhooks_out}/${_teleport_pre_uninstall}" \
+# --after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
+# --before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
+# -n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
+# EOF
+# )"
+
+      _fpm_command="$(cat  << EOF
+fpm --description "$_pkg_description" \
+-m "$_pkg_maintainer" --license "apache" -a "$_arch" \
+--directories "$_out_dir" --config-files "$_target_cfg_file" \
+--after-install "${_installerhooks_out}/${_teleport_post_install}" \
+--after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
+--before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
+--after-remove  "${_installerhooks_out}/${_teleport_post_uninstall}" \
+-n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
+EOF
+)"
+
+
+#     _fpm_command="$(cat  << EOF
+# fpm --description "$_pkg_description" \
+# -m "$_pkg_maintainer" --license "apache" -a "$_arch" \
+# --directories "$_out_dir" --config-files "$_target_cfg_file" \
+# --deb-templates "${_installerhooks_out}/deb-templates" \
+# --deb-config "${_installerhooks_out}/deb-config" \
+# --deb-after-purge "${_installerhooks_out}/deb-after-purge" \
+# --after-install "${_installerhooks_out}/${_teleport_post_install}" \
+# --after-upgrade "${_installerhooks_out}/${_teleport_post_install}" \
+# --before-remove  "${_installerhooks_out}/${_teleport_pre_uninstall}" \
+# -n "$_pkg_name" -t "$_pkg_type" -v "${_teleport_src_version}" -s dir "./=/"
+# EOF
+# )"
+
+
+
+    fi
+
+
+
+
+    _fpm_output="$(eval $_fpm_command)"
+
+    _rc=$?
+    if [ $_rc != 0 ]; then
+      if [ ! "$(echo $_fpm_output | grep -i "file already exists, refusing to continue")" ]; then
+        err 1 "there was a non-zero return code ($_rc) from fpm. command was:" "$_fpm_command" "$_fpm_output"
+      else
+        echo "$_fpm_output"
+        info "continuing..."
+      fi
+    fi
+
+    echo "_fpm_output=$_fpm_output"
+
+    _version_greppable="$(echo "$_teleport_src_version" | sed -e "s/[^a-zA-Z0-9]/./g")"
+    echo "_version_greppable=$_version_greppable"
+
+    # _setup_file="$(echo "$_fpm_output" | grep -o -E "${_pkg_name}.*${_teleport_src_version}[^\"]*")"
+    _setup_file="$(echo "$_fpm_output" | grep -o -E "${_pkg_name}.*${_version_greppable}[^\"]*")"
+
+    if [ ! "$_setup_file" ]; then
+      _setup_file="$(echo "$_fpm_output" | grep -o -i "Created package.*" | grep -o -E "${_pkg_name}[^\"]*")"
+      _fpm_filename="$_setup_file"
+
+      _ext="$(echo $_setup_file | sed -e "s/.*\.//g")"
+      _setup_basename="${_setup_file%.$_ext}"
+
+      _setup_file="${_setup_basename}_${_teleport_src_version}.${_ext}"
+
+      mv "$_fpm_filename" "$_setup_file"
+    fi
+
+    echo "_setup_file=$_setup_file"
+
+    if [ "$_with_token" ]; then
+
+      _fpm_filename="$_setup_file"
+      _ext="$(echo $_setup_file | sed -e "s/.*\.//g")"
+      _setup_basename="${_setup_file%.$_ext}"
+
+      if [ "$_tsetup_include_expiry" ]; then
+        _setup_file="${_setup_basename}_${_token_hash_short}${_expiry_seperator}${_expiry_date}.${_ext}"
+      else
+        _setup_file="${_setup_basename}_${_token_hash_short}.${_ext}"
+      fi
+
+      mv "$_fpm_filename" "$_setup_file"
+    fi
+  fi
+  eval "_setup_file_${_pkg_type}=\"$_setup_file\""
+
+  echo cp "${_setup_file}" "$_cwd"
+  cp -R -i "${_setup_file}" "$_cwd"
+
+
+
+  cd "$_cwd"
+  rm -rf "$_tmp"
+
+  echo ""
+}
+
+
+_resolve_nodes()
+{
+  if [ "$_ssh" ]; then
+   _ssh="ssh"
+   _ssh_debug="-v"
+   _scp="scp"
+
+  else
+   _ssh="tsh ssh"
+   _ssh_debug="--debug"
+   _scp="tsh scp"
+
+   tsh status
+  fi
+
+  if [ "$_nodes" ]; then
+
+    if [ "$_nodes" = "all" ]; then
+      _nodes="$(tsh ls | grep -o "^[^ -]*" | grep -v "Node")"
+    fi
+
+    _i=0
+    for _node in $_nodes; do
+
+      if [ "$_ssh_user" ] && [ ! "$(echo "$_node" | grep "@")" ]; then
+        _node="${_ssh_user}@${_node}"
+      fi
+
+      _uid="$($_ssh ${_node} id -u 2> /dev/null | tr -d '[:cntrl:]')"
+
+
+      # determine if we it's necessary to use sudo on the target node
+      unset _sudo
+      if [ "$_uid" ]; then
+
+        if [ "$_uid" -ne "0" ]; then
+          _sudo="sudo"
+          eval "_node_${_i}_sudo=\"$_sudo\""
+
+          _uid="$($_ssh ${_node} $_sudo id -u 2> /dev/null | tr -d '[:cntrl:]')"
+
+          if [ "$_uid" ]; then
+
+            if [ "$_uid" -ne "0" ]; then
+              warn "cannot get root on target node $_node with command '$_ssh ${_node} $_sudo id -u'. To test for sudo elevation to root on remote node, the uid returned was $_uid instead of root's system level uid of '0')"
+              echo "$_ssh $_ssh_debug ${_node} $_sudo id -u"
+              $_ssh $_ssh_debug ${_node} $_sudo id -u
+              exit $?
+            fi
+
+          else
+            warn "cannot run command '$_ssh ${_node} $_sudo id -u' to test for sudo elevation to root on remote node, nothing returned. The error was:"
+            echo "$_ssh $_ssh_debug ${_node} $_sudo id -u"
+            $_ssh $_ssh_debug ${_node} $_sudo id -u
+            exit $?
+          fi
+
+        else
+          eval "unset _node_${_i}_sudo"
+        fi
+
+      else
+        warn "cannot run command '$_ssh ${_node} id -u' to get login uid on remote node, nothing returned. The error was:"
+
+        # line endings \n dont print correctly
+        # _short_error_msg="$($_ssh ${_node} id -u -n | sed -e "s/ \n/\n/g")"
+        # printf "$_short_error_msg"
+        echo "$_ssh $_ssh_debug ${_node} id -u"
+        $_ssh $_ssh_debug ${_node} id -u
+        exit $?
+      fi
+
+
+
+      # if [ "$($_ssh ${_node} id -u -n 2> /dev/null)" != "root" ]; then
+      #   warn "cannot login to node \"$_node\" as \"$_ssh_user\", the error was:"
+
+      #   # line endings \n dont print correctly
+      #   # _short_error_msg="$($_ssh ${_node} id -u -n | sed -e "s/ \n/\n/g")"
+      #   # printf "$_short_error_msg"
+      #   $_ssh $_ssh_debug ${_node} id -u -n
+      #   exit $?
+      # fi
+
+      _i="$(expr $_i + 1)"
+    done
+
+  else
+    err 1 "no nodes given"
+  fi
+
+}
+
+_upgrade_nodes()
+{
+  _find_teleport_config
+  _resolve_nodes
+  # _provision_archive
+
+  _wait_for_restart=5
+
+  # save setup file and pkg_type
+  _setup_file_fallback="$_setup_file"
+  _pkg_type_fallback="$_pkg_type"
+
+  _i=0
+  unset _setup_files
+  for _node in $_nodes; do
+
+    eval "_sudo=\$_node_${_i}_sudo"
+
+    info tctl $_tctl_debug_flag --config=${_teleport_config} nodes ls
+    _node_pkg_type="$(tctl $_tctl_debug_flag --config=${_teleport_config} nodes ls | grep -E "^${_node} " | grep -o "pkg-type=[^, ]*" | sed -e "s/pkg-type=//g")"
+
+    if [ "$_node_pkg_type" ]; then
+      _pkg_type="$_node_pkg_type"
+    else
+      _pkg_type="$_pkg_type_fallback"
+    fi
+
+    if [ ! -e "$(eval "\$_setup_file_${_pkg_type}")" ]; then
+      _provision_archive
+    else
+      _setup_file="$(eval "\$_setup_file_${_pkg_type}")"
+    fi
+
+    _old_teleport_version="$($_ssh "$_node" $_sudo teleport version | tr -d '[:cntrl:]')"
+    _new_teleport_version="$($_bin_src_teleport version)"
+
+    info "upgrading node \"${_node}\". From old version: $_old_teleport_version"
+    info "upgrading node \"${_node}\". To new version:   $_new_teleport_version"
+    # echo
+    # echo ""
+
+    info "copying \"${_setup_file}\" to \"${_node}:\""
+    $_scp "${_setup_file}" "${_node}:"
+    if [ $? -ne 0 ]; then
+      err 1 "failed to $_scp setup file $_setup_file to $_node"
+    fi
+    echo
+    # echo ""
+
+    case $_node_pkg_type in
+      tarball|zip|tar|dir)
+        info "unpacking archive, overwites existing files"
+        $_ssh "$_node" "$_sudo tar -Pzxvf $_setup_file"
+
+        # $_ssh "$_node" "$_sudo ${_out_dir}/bin/${_teleport_post_install}"
+
+        info "running post install script..."
+        info $_ssh "$_node" "$_sudo nohup sh -c \"${_out_dir}/bin/${_teleport_post_install}\" > /dev/null 2>&1 &"
+        $_ssh "$_node" "$_sudo nohup sh -c \"${_out_dir}/bin/${_teleport_post_install}\" > /dev/null 2>&1 &"
+      ;;
+
+      binary|sh)
+        # $_ssh "$_node" "$_sudo ./${_setup_file}"
+
+        info "running ${_setup_file}, overwites existing files"
+        info $_ssh "$_node" "$_sudo nohup sh -c \"./${_setup_file}\" > /dev/null 2>&1 &"
+        $_ssh "$_node" "$_sudo nohup sh -c \"./${_setup_file}\" > /dev/null 2>&1 &"
+      ;;
+
+      deb)
+        # _tgt_gdebi="$($_ssh "$_node" "$_sudo command -v gdebi")"
+        # if [ ! "$_tgt_gdebi" ]; then
+        #   info "installing gdebi on then target node..."
+        #   $_ssh "$_node" "$_sudo apt-get install -y gdebi"
+        # fi
+        # info "running gdebi -n ${_setup_file}"
+        # $_ssh "$_node" "$_sudo gdebi -n ${_setup_file}"
+        # echo ""
+
+        # $_ssh "$_node" "$_sudo dpkg -i ${_setup_file}"
+        # echo ""
+
+
+        # info $_ssh "$_node" "$_sudo nohup sh -c \"\" > /dev/null 2>&1 &"
+
+        # does not apply to dpkg # DEBIAN_FRONTEND=noninteractive
+
+
+
+
+# fpm flags
+# ===========
+# --deb-config /path/to/deb-config
+# --deb-templates /path/to/deb-templates
+# --deb-after-purge /path/to/deb-after-purge
+
+
+
+
+
+
+        info "running DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file}"
+        # info $_ssh "$_node" "$_sudo nohup sh -c \"dpkg $_dpkg_force_conf -i ${_setup_file}\" > /dev/null 2>&1 &"
+        # $_ssh "$_node" "$_sudo nohup sh -c \"dpkg -i $_dpkg_force_conf ${_setup_file}\" > /dev/null 2>&1 &"
+
+
+        info $_ssh "$_node" "$_sudo nohup sh -c \"DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file} > teleport_setup.nohup.log 2>&1 &\""
+        $_ssh "$_node" "$_sudo nohup sh -c \"DEBIAN_FRONTEND=noninteractive dpkg $_dpkg_force_conf -i ${_setup_file} > teleport_setup.nohup.log 2>&1 &\""
+
+
+      ;;
+
+      rpm)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      osxpkg)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      solaris)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      freebsd|pkgin)
+        err 1 "pkg_type \"$_pkg_type\" is not handled because there is already a freebsd port. exiting."
+      ;;
+
+      puppet)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      apk)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      pacman)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      snap)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      *)
+        err 1 "unrecognized pkg_type \"$_pkg_type\", don't know what to do / no handler for updating! exiting."
+      ;;
+    esac
+
+    info "waiting $_wait_for_restart seconds for teleport to restart on $_node"
+    sleep $_wait_for_restart
+
+    info "logging back in to check teleport came back up"
+
+    # _setup_file_on_remote="$($_ssh "$_node" "$_sudo ls ${_setup_file}" | tr -d '[:cntrl:]')"
+
+    $_ssh "$_node" "$_sudo ps -l -C teleport"
+
+    if [ $? -ne 0 ]; then
+    # if [  != "${_setup_file}" ]; then
+      warn "cannot see teleport process running on target node \"$_node\", the error was:"
+
+      # line endings \n dont print correctly
+      # _short_error_msg="$($_ssh ${_node} id -u -n | sed -e "s/ \n/\n/g")"
+      # printf "$_short_error_msg"
+      # echo "$_ssh $_ssh_debug \"${_node}\" \"$_sudo ls ${_setup_file}\""
+      # $_ssh $_ssh_debug "${_node}" "$_sudo ls ${_setup_file}"
+
+      echo $_ssh $_ssh_debug "$_node" "$_sudo ps -l -C teleport"
+      $_ssh $_ssh_debug "$_node" "$_sudo ps -l -C teleport"
+
+      info "the installer output was:"
+      $_ssh "$_node" "$_sudo cat teleport_setup.nohup.log"
+
+      exit $?
+
+    else
+      info "installed version: $($_ssh "$_node" "$_sudo teleport version")"
+
+      info "the installer output was:"
+      $_ssh "$_node" "$_sudo cat teleport_setup.nohup.log"
+    fi
+
+
+
+
+    # info "removing setup file from target node"
+    # $_ssh "$_node" "$_sudo rm ${_setup_file}"
+
+    info "cleaning... removing \"${_setup_file}\" from target node"
+    $_ssh "$_node" "$_sudo rm -f $_setup_file nohup.out teleport_setup.nohup.log"
+
+    _setup_files="$_setup_files $_setup_file"
+
+    info "done. upgrading of node \"${_node}\" completed."
+
+    _i="$(expr $_i + 1)"
+  done
+
+  info "cleaning... removing setup file(s) from local machine"
+  for _setup_file in $_setup_files; do
+    rm -f $_setup_file
+  done
+
+  info "all done."
+}
+
+
+
+_remove_nodes()
+{
+  _resolve_nodes
+
+  _i=0
+  for _node in $_nodes; do
+    eval "_sudo=\$_node_${_i}_sudo"
+
+    case $_pkg_type in
+
+      binary|tarball|zip|tar|dir|sh)
+
+        info "deleting teleport installed files on \"${_node}\"..."
+
+        info $_ssh "$_node" "$_sudo for _bin in $_bins; do rm -f \"${_out_binpath_debian}/\${_bin}\"; done"
+        $_ssh "$_node" "$_sudo for _bin in $_bins; do rm -f \"${_out_binpath_debian}/\${_bin}\"; done"
+
+        info $_ssh "$_node" "$_sudo rm -rf $_out_dir"
+        $_ssh "$_node" "$_sudo rm -rf $_out_dir"
+        echo ""
+
+        info "stopping and removing ${_teleport_service}..."
+
+        info $_ssh "$_node" "$_sudo nohup sh -c \"systemctl stop ${_teleport_service}; systemctl disable ${_teleport_service}; rm -f /etc/systemd/system/${_teleport_service}\" > /dev/null 2>&1 &"
+        $_ssh "$_node" "$_sudo nohup sh -c \"systemctl stop ${_teleport_service}; systemctl disable ${_teleport_service}; rm -f /etc/systemd/system/${_teleport_service}\" > /dev/null 2>&1 &"
+
+        info "all done."
+        echo ""
+      ;;
+
+      deb)
+        info $_ssh "$_node" "$_sudo apt-get remove ${_pkg_name}"
+        $_ssh "$_node" "$_sudo apt-get remove ${_pkg_name}"
+
+        info $_ssh "$_node" "$_sudo apt-get purge ${_pkg_name}"
+        $_ssh "$_node" "$_sudo apt-get purge ${_pkg_name}"
+
+        info $_ssh "$_node" "$_sudo apt-get autoremove"
+        $_ssh "$_node" "$_sudo apt-get autoremove"
+
+        info $_ssh "$_node" "$_sudo apt-get clean"
+        $_ssh "$_node" "$_sudo apt-get clean"
+
+        echo ""
+      ;;
+
+      rpm)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      osxpkg)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      solaris)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      freebsd|pkgin)
+        err 1 "pkg_type \"$_pkg_type\" is not handled because there is already a freebsd port. exiting."
+      ;;
+
+      puppet)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      apk)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      pacman)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      snap)
+        err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."
+      ;;
+
+      *)
+        err 1 "unrecognized pkg_type \"$_pkg_type\", don't know what to do / no handler for removal! exiting."
+      ;;
+    esac
+
+    if [ "$($_ssh ${_node} id -u 2> /dev/null | tr -d '[:cntrl:]')" -ne 0 ]; then
+      info "node removed: \"${_node}\". $_ssh can no longer reach the teleport service on the node at \"${_node}\""
+    fi
+
+    _i="$(expr $_i + 1)"
+  done
+}
+
+
+
+
+
+
+
+
+
+
+
+_main()
+{
+  _parse_args "$@"
+
+  case $_action in
+
+    install)
+      if [ "$_nodes" ]; then
+        _upgrade_nodes
+      else
+        _provision_archive
+      fi
+    ;;
+
+    upgrade)  _upgrade_nodes ;;
+    remove)   _remove_nodes  ;;
+
+    *)        _cat_help      ;;
+  esac
+}
+
+
+
+# =================================================================================================
+# begin!
+
+_main "$@"
+
+
+
