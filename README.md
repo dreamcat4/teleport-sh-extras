@@ -19,6 +19,7 @@
 * [tsysinfo](#tsysinfo)
   * [Useful for...](#useful-for)
 * [Contributing](#contributing)
+  * [Where to write in support for missing platforms?](#where-to-write-in-support-for-missing-platforms)
 * [Credit](#credit)
 
 <!-- /MarkdownTOC -->
@@ -309,6 +310,38 @@ For a full list of all the available subcommands, run `tsysinfo --help`
 Pull requests are welcome, or you can open an issue if it's about something you cannot fix yourself and need for me to look at first.
 
 Specifically a small amount of shell code is missing in `tdeploy`, needed to fully finish off support for certain popular packaging formats and init systems. Full support is already provided for debian packages and systemd. Plus generic packages (tarball, self extracting installer). However to fill in for others such as rpm, pacman, MacOS pkgs / launchd, NetBSD...). Well I don't use any of those ones myself, cannot test the resultant packages to ensure that they work. So instead there are some clear stubs left in the code in those few missing spots. And a clear error message is thrown up at those points. For others to fill in.
+
+<a id="where-to-write-in-support-for-missing-platforms"></a>
+## Where to write in support for missing platforms?
+
+Where in the code left to be completed for other platforms. Needs PRs.
+
+**Note:** The actual line numbers will have shifted and are different from these below links to previous commits.
+
+* Untested daemon startup / service files. Marked as `# Not tested - needs testing`
+
+[Launchd](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L343-L373)
+
+[Runit](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L375-L403)
+
+[SysV Init](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L437-L623)
+
+[Upstart](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L625-L652)
+
+* What is required to support for solaris, pkgin, freebsd, apk, snap, or other package types.
+
+Error message stubs - `err 1 "pkg_type \"$_pkg_type\" is not handled! missing functionality! needs PR / community contribution. exiting."`
+
+[When selecting init startup scripts for the pkg](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L2310-L2328)
+
+[When installing or upgrading nodes via tsh or ssh](https://github.com/dreamcat4/teleport-sh-extras/blob/24d6aaa6a88a571cdb570b9758e7cbdf55394981/tdeploy#L2551-L2581)
+
+[When removing or uninstalling nodes via tsh or ssh](https://github.com/dreamcat4/teleport-sh-extras/blob/9ec4b6d7da11a3ce324da07397c0208a3a630821/tdeploy#L2887-L2921)
+
+* If the package type being targeted needs it's own specific set of flags passed into `fpm` command
+
+[else _fpm_command=...](https://github.com/dreamcat4/teleport-sh-extras/blob/24d6aaa6a88a571cdb570b9758e7cbdf55394981/tdeploy#L2302-L2332)
+
 
 <a id="credit"></a>
 # Credit
