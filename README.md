@@ -32,7 +32,7 @@ Some 3rd party helper shell scripts for [gravitational/teleport](https://github.
 
 If you wish to upstream any of the features provided here into the main teleport project, by re-writing them into native go, please do so! That would be fantastic. Then these shell scripts can eventually be deprecated / obsoleted in favor of officially teleport functionality.
 
-In the meantime please enjoy these helper scripts for what they are intended to be. Just some rapid prototyping of a few small missing features / funcitonality. That helped me to make teleport work more like the way I needed.
+In the meantime please enjoy these helper scripts for what they are intended to be. Just some rapid prototyping of a few small missing features / functionality. That helped me to make teleport work more like the way I needed.
 
 <a id="quick-start"></a>
 # Quick start
