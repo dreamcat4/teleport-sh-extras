@@ -225,7 +225,9 @@ Once you have used tdeploy to generate a debian `.deb` apt package. Then you nee
 
 If you are doing that non-interactively by specifying `DEBIAN_FRONTEND=noninteractive` in your environment. Then teleport will not have the opportunity to ask for the interface to bind to. And instead bind to the default ip address of `0.0.0.0` which is all of the network interfaces.
 
-So the below instructions show how to script a non-interactive installation when you also wih to specify a specific ip address to bind to. Which might change on a per-node basis. For example if you are scripting with another automation tool to manage the installs across multiple machines (ansible, puppet, saltstack, etc).
+For more explanations about this default `listen_addr:` setting. Please see [here in the code](https://github.com/dreamcat4/teleport-sh-extras/blob/master/tdeploy#L111-L139).
+
+The below instructions show how to script a non-interactive installation when you also wih to specify a specific ip address to bind to. Which might change on a per-node basis. For example if you are scripting with another automation tool to manage the installs across multiple machines (ansible, puppet, saltstack, etc).
 
 ```sh
 # before installing the pkg. must first much disable and mask the teleport.service in systemd
