@@ -1012,231 +1012,231 @@ _parse_args()
     _no_args=true
   fi
 
-    while [ "$1" ]; do
-        _arg="$1"
+  while [ "$1" ]; do
+      _arg="$1"
 
-        case $_arg in
+      case $_arg in
 
-          --settings)           _tdeploy_settings  ;;
-          --install)            _action="install"  ;;
-          --upgrade)            _action="upgrade"  ;;
-          --remove)             _action="remove"   ;;
+        --settings)           _tdeploy_settings  ;;
+        --install)            _action="install"  ;;
+        --upgrade)            _action="upgrade"  ;;
+        --remove)             _action="remove"   ;;
 
-          --with-token)         _with_token="true" ;;
+        --with-token)         _with_token="true" ;;
 
-          --nodes*)
+        --nodes*)
 
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _nodes="$(echo "$_arg" | sed -e "s|^--nodes=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_nodes=true 
-            fi
-          ;;
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _nodes="$(echo "$_arg" | sed -e "s|^--nodes=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_nodes=true 
+          fi
+        ;;
 
-          --force-conf*)
-            case $_arg in
-              --force-confnew|--force-confold|--force-confdef|--force-confask)
-                _dpkg_force_conf="$_arg"
-              ;;
+        --force-conf*)
+          case $_arg in
+            --force-confnew|--force-confold|--force-confdef|--force-confask)
+              _dpkg_force_conf="$_arg"
+            ;;
 
-              *)
-                warn "unrecognized argument: \"$_arg\""
-                _cat_help
-                exit 1
-              ;;
-            esac
-          ;;
-
-          --pkg-style*)
-
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _pkg_style="$(echo "$_arg" | sed -e "s|^--pkg-style=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_pkg_style=true 
-            fi
-          ;;
-
-          --pkg-type*)
-
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _pkg_type="$(echo "$_arg" | sed -e "s|^--pkg-type=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_pkg_type=true 
-            fi
-          ;;
-
-          --init-types*)
-
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _init_types="$(echo "$_arg" | sed -e "s|^--init-types=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_init_types=true 
-            fi
-          ;;
-
-          --debian-revision*)
-
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _debian_revision="$(echo "$_arg" | sed -e "s|^--debian-revision=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_debian_revision=true 
-            fi
-          ;;
-
-          --long-version)               _long_version="true" ;;
-
-          --ssh)                        _ssh="true" ;;
-
-          --ssh-user*)
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _ssh_user="$(echo "$_arg" | sed -e "s|^--ssh-user=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_ssh_user=true 
-            fi
-          ;;
-
-          --debug|-d)                   _tctl_debug_flag="--debug" ;;
-
-          --config*|-c*)
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _teleport_config="$(echo "$_arg" | sed -e "s|^--config=||" -e "s|^-c=||" -e "s|\"||g")"
-            else
-              _arg_config=true 
-            fi
-          ;;
-
-          --roles*)
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _tctl_roles_flag="$_arg"
-            else
-              _arg_roles=true 
-            fi
-          ;;
-
-          --ttl*)
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              _ttl="$(echo "$_arg" | sed -e "s|^--ttl=||" -e "s|\"||g")"
-            else
-              _arg_ttl=true 
-            fi
-          ;;
-
-          --token*)
-            if [ "$_arg" != "${_arg%=*}" ]; then
-              # _token="$(echo "$_arg" | sed -e "s|^--token=||" -e "s|\"||g")"
-              _tctl_token_flag="$_arg"
-            else
-              _arg_token=true 
-            fi
-          ;;
-
-          --help|-h)                   _help=true ;;
-
-          *)
-            if [ "$_arg_nodes" ]; then
-              unset _arg_nodes
-              _nodes="$_arg"
-
-            elif [ "$_arg_pkg_style" ]; then
-              unset _arg_pkg_style
-              _pkg_style="$_arg"
-
-            elif [ "$_arg_pkg_type" ]; then
-              unset _arg_pkg_type
-              _pkg_type="$_arg"
-
-            elif [ "$_arg_init_types" ]; then
-              unset _arg_init_types
-              _init_types="$_arg"
-
-            elif [ "$_arg_debian_revision" ]; then
-              unset _arg_debian_revision
-              _debian_revision="$_arg"
-
-            elif [ "$_arg_ssh_user" ]; then
-              unset _arg_ssh_user
-              _ssh_user="$_arg"
-
-            elif [ "$_arg_config" ]; then
-              unset _arg_config
-              _teleport_config="$_arg"
-
-            elif [ "$_arg_roles" ]; then
-              unset _arg_roles
-              # _roles="$_arg"
-            _tctl_roles_flag="--roles=${_arg}"
-
-            elif [ "$_arg_ttl" ]; then
-              unset _arg_ttl
-              _ttl="$_arg"
-
-            elif [ "$_arg_token" ]; then
-              unset _arg_token
-              # _token="$_arg"
-              _tctl_token_flag="--token=${_arg}"
-
-            else
+            *)
               warn "unrecognized argument: \"$_arg\""
               _cat_help
               exit 1
-            fi
-          ;;
-        esac
+            ;;
+          esac
+        ;;
 
-        shift
+        --pkg-style*)
+
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _pkg_style="$(echo "$_arg" | sed -e "s|^--pkg-style=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_pkg_style=true 
+          fi
+        ;;
+
+        --pkg-type*)
+
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _pkg_type="$(echo "$_arg" | sed -e "s|^--pkg-type=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_pkg_type=true 
+          fi
+        ;;
+
+        --init-types*)
+
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _init_types="$(echo "$_arg" | sed -e "s|^--init-types=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_init_types=true 
+          fi
+        ;;
+
+        --debian-revision*)
+
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _debian_revision="$(echo "$_arg" | sed -e "s|^--debian-revision=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_debian_revision=true 
+          fi
+        ;;
+
+        --long-version)               _long_version="true" ;;
+
+        --ssh)                        _ssh="true" ;;
+
+        --ssh-user*)
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _ssh_user="$(echo "$_arg" | sed -e "s|^--ssh-user=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_ssh_user=true 
+          fi
+        ;;
+
+        --debug|-d)                   _tctl_debug_flag="--debug" ;;
+
+        --config*|-c*)
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _teleport_config="$(echo "$_arg" | sed -e "s|^--config=||" -e "s|^-c=||" -e "s|\"||g")"
+          else
+            _arg_config=true 
+          fi
+        ;;
+
+        --roles*)
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _tctl_roles_flag="$_arg"
+          else
+            _arg_roles=true 
+          fi
+        ;;
+
+        --ttl*)
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            _ttl="$(echo "$_arg" | sed -e "s|^--ttl=||" -e "s|\"||g")"
+          else
+            _arg_ttl=true 
+          fi
+        ;;
+
+        --token*)
+          if [ "$_arg" != "${_arg%=*}" ]; then
+            # _token="$(echo "$_arg" | sed -e "s|^--token=||" -e "s|\"||g")"
+            _tctl_token_flag="$_arg"
+          else
+            _arg_token=true 
+          fi
+        ;;
+
+        --help|-h)                   _help=true ;;
+
+        *)
+          if [ "$_arg_nodes" ]; then
+            unset _arg_nodes
+            _nodes="$_arg"
+
+          elif [ "$_arg_pkg_style" ]; then
+            unset _arg_pkg_style
+            _pkg_style="$_arg"
+
+          elif [ "$_arg_pkg_type" ]; then
+            unset _arg_pkg_type
+            _pkg_type="$_arg"
+
+          elif [ "$_arg_init_types" ]; then
+            unset _arg_init_types
+            _init_types="$_arg"
+
+          elif [ "$_arg_debian_revision" ]; then
+            unset _arg_debian_revision
+            _debian_revision="$_arg"
+
+          elif [ "$_arg_ssh_user" ]; then
+            unset _arg_ssh_user
+            _ssh_user="$_arg"
+
+          elif [ "$_arg_config" ]; then
+            unset _arg_config
+            _teleport_config="$_arg"
+
+          elif [ "$_arg_roles" ]; then
+            unset _arg_roles
+            # _roles="$_arg"
+          _tctl_roles_flag="--roles=${_arg}"
+
+          elif [ "$_arg_ttl" ]; then
+            unset _arg_ttl
+            _ttl="$_arg"
+
+          elif [ "$_arg_token" ]; then
+            unset _arg_token
+            # _token="$_arg"
+            _tctl_token_flag="--token=${_arg}"
+
+          else
+            warn "unrecognized argument: \"$_arg\""
+            _cat_help
+            exit 1
+          fi
+        ;;
+      esac
+
+      shift
+  done
+
+  # Set the node's roles. Can be any of: auth, node, proxy. Gets written to teleport.yaml
+  _role_node="no"
+  _role_auth="no"
+  _role_proxy="no"
+
+  if [ "$_tctl_roles_flag" ]; then
+    _roles="$(echo "$_tctl_roles_flag" | sed -e "s|^--roles=||" -e "s|\"||g" -e "s/,/ /g")"
+    for _role in $_roles; do
+      case $_role in
+
+        auth)   _role_auth="yes"   ;;
+        node)   _role_node="yes"   ;;
+        proxy)  _role_proxy="yes"  ;;
+
+        *)
+          err 1 "role \"$_role\" not recognized. valid values are: auth, node, proxy"
+        ;;
+      esac
     done
 
-    # Set the node's roles. Can be any of: auth, node, proxy. Gets written to teleport.yaml
-    _role_node="no"
-    _role_auth="no"
-    _role_proxy="no"
+  else
+    _role_node="yes"
+  fi
 
-    if [ "$_tctl_roles_flag" ]; then
-      _roles="$(echo "$_tctl_roles_flag" | sed -e "s|^--roles=||" -e "s|\"||g" -e "s/,/ /g")"
-      for _role in $_roles; do
-        case $_role in
+  if [ "$_nodes" ]; then
+    _nodes="$(echo "$_nodes" | sed -e "s/,/ /g")"
+  fi
 
-          auth)   _role_auth="yes"   ;;
-          node)   _role_node="yes"   ;;
-          proxy)  _role_proxy="yes"  ;;
+  if [ "$_init_types" ]; then
+    _init_types="$(echo "$_init_types" | sed -e "s/,/ /g")"
+  fi
 
-          *)
-            err 1 "role \"$_role\" not recognized. valid values are: auth, node, proxy"
-          ;;
-        esac
-      done
+  if [ ! "$_dpkg_force_conf" ]; then
+    # set the default dpkg --force-conf option
+    _dpkg_force_conf="--force-confold"
+  fi
 
-    else
-      _role_node="yes"
-    fi
+  if [ ! "$_pkg_style" ]; then
+    # set the default installer package type
+    _pkg_style="$_pkg_style_default"
+  fi
 
-    if [ "$_nodes" ]; then
-      _nodes="$(echo "$_nodes" | sed -e "s/,/ /g")"
-    fi
+  if [ ! "$_pkg_type" ]; then
+    # set the default installer package type
+    _pkg_type="$_pkg_type_default"
+  fi
 
-    if [ "$_init_types" ]; then
-      _init_types="$(echo "$_init_types" | sed -e "s/,/ /g")"
-    fi
-
-    if [ ! "$_dpkg_force_conf" ]; then
-      # set the default dpkg --force-conf option
-      _dpkg_force_conf="--force-confold"
-    fi
-
-    if [ ! "$_pkg_style" ]; then
-      # set the default installer package type
-      _pkg_style="$_pkg_style_default"
-    fi
-
-    if [ ! "$_pkg_type" ]; then
-      # set the default installer package type
-      _pkg_type="$_pkg_type_default"
-    fi
-
-    if [ "$_help" ]; then
-        _cat_help
-        exit 0
-    fi
+  if [ "$_help" ]; then
+      _cat_help
+      exit 0
+  fi
 }
 
 
