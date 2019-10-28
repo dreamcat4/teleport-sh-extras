@@ -406,16 +406,18 @@ _disks_worst_temp()
         for _disk in $_disks; do
             _smartctl_temp_lines="$($_sudo smartctl -x /dev/${_disk} | grep -i temperature)"
 
-            _temp_current="$(echo "$_smartctl_temp_lines" | grep "Current Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g")"
-            _temp_max_recommended="$(echo "$_smartctl_temp_lines" | grep -i "recommended Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g" -e "s|.*/||g")"
-            _temp_distance_to_max="$(echo "$_temp_max_recommended - $_temp_current" | bc)"
+            if [ "$_smartctl_temp_lines" ]; then
+                _temp_current="$(echo "$_smartctl_temp_lines" | grep "Current Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g")"
+                _temp_max_recommended="$(echo "$_smartctl_temp_lines" | grep -i "recommended Temperature:" | sed -e "s/.*: *//g" -e "s/ .*//g" -e "s|.*/||g")"
+                _temp_distance_to_max="$(echo "$_temp_max_recommended - $_temp_current" | bc)"
 
-            if [ $_temp_distance_to_max -lt $_temp_last_known_most_critical ]; then
-                _worst_disk_temp_msg="${_disk}: ${_temp_current}c/${_temp_max_recommended}c"
-            fi
+                if [ $_temp_distance_to_max -lt $_temp_last_known_most_critical ]; then
+                    _worst_disk_temp_msg="${_disk}: ${_temp_current}c/${_temp_max_recommended}c"
+                fi
 
-            if [ $_temp_distance_to_max -le $_temp_critical_distance_to_reccomended_max ]; then
-                _crit_disk_temp_msg="${_crit_disk_temp_msg}, ${_disk}:${_temp_current}c/${_temp_max_recommended}c"
+                if [ $_temp_distance_to_max -le $_temp_critical_distance_to_reccomended_max ]; then
+                    _crit_disk_temp_msg="${_crit_disk_temp_msg}, ${_disk}:${_temp_current}c/${_temp_max_recommended}c"
+                fi
             fi
         done
 
